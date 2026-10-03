@@ -5,7 +5,10 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from dotenv import load_dotenv
+
+# Подключаем наши модули
 from downloader import download_track, search_tracks
+from visualizer import generate_apple_card
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -126,16 +129,50 @@ async def handle_search(message: types.Message, mode: str = "official"):
             await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос или переключить режим.")
             return
 
+        # Разделяем логику: это профиль артиста (dict) или просто список треков (list)
+        is_artist = isinstance(results, dict) and results.get('type') == 'artist'
+        tracks_list = results['tracks'] if is_artist else results
+
         USER_SESSIONS[message.from_user.id] = {
             "query": query,
             "mode": mode,
-            "results": results,
+            "results": tracks_list,
             "urls": {}
         }
 
         kb = build_search_keyboard(message.from_user.id, page=0)
         mode_title = "Официальные релизы" if mode == "official" else "Ремиксы (SoundCloud)"
-        await status_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
+
+        if is_artist:
+            await status_msg.edit_text("🎨 Генерирую карточку артиста...")
+            try:
+                # Генерируем картинку
+                image_path = await generate_apple_card(
+                    artist_name=results['artist_name'],
+                    tracks=results['tracks'],
+                    photo_url=results.get('artist_photo')
+                )
+                photo = FSInputFile(image_path)
+                
+                # Отправляем фото и удаляем сообщение "Генерирую..."
+                await message.answer_photo(
+                    photo=photo,
+                    caption=f"🎧 Результаты: **{mode_title}**",
+                    reply_markup=kb,
+                    parse_mode="Markdown"
+                )
+                await status_msg.delete()
+                
+                # Чистим темповый файл
+                if os.path.exists(image_path):
+                    os.remove(image_path)
+            except Exception as e:
+                print(f"Ошибка генерации картинки: {e}")
+                # Фолбэк на текст, если генерация упала
+                await status_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
+        else:
+            await status_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
+            
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
 
@@ -150,26 +187,58 @@ async def callback_toggle_mode(callback: CallbackQuery):
         return
 
     query = session["query"]
-    await callback.message.edit_text("🔄 Переключаю режим поиска...")
+    await callback.answer("🔄 Переключаю режим...")
+    
+    # Удаляем старое сообщение (так как оно может быть фото или текстом) и создаем новое
+    loading_msg = await callback.message.answer("⏳ Поиск...")
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     
     results = await search_tracks(query, mode=new_mode, limit=15)
     if not results:
-        await callback.message.edit_text("Ничего не найдено в этом режиме.")
+        await loading_msg.edit_text("Ничего не найдено в этом режиме.")
         return
 
+    is_artist = isinstance(results, dict) and results.get('type') == 'artist'
+    tracks_list = results['tracks'] if is_artist else results
+
     session["mode"] = new_mode
-    session["results"] = results
+    session["results"] = tracks_list
     session["urls"] = {}
 
     kb = build_search_keyboard(user_id, page=0)
     mode_title = "Официальные релизы" if new_mode == "official" else "Ремиксы (SoundCloud)"
-    await callback.message.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
-    await callback.answer()
+    
+    if is_artist:
+        await loading_msg.edit_text("🎨 Генерирую карточку артиста...")
+        try:
+            image_path = await generate_apple_card(
+                artist_name=results['artist_name'],
+                tracks=results['tracks'],
+                photo_url=results.get('artist_photo')
+            )
+            photo = FSInputFile(image_path)
+            await callback.message.answer_photo(
+                photo=photo,
+                caption=f"🎧 Результаты: **{mode_title}**",
+                reply_markup=kb,
+                parse_mode="Markdown"
+            )
+            await loading_msg.delete()
+            if os.path.exists(image_path):
+                os.remove(image_path)
+        except Exception as e:
+            await loading_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
+    else:
+        await loading_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
 
 @dp.callback_query(F.data.startswith("page:"))
 async def callback_pagination(callback: CallbackQuery):
     page = int(callback.data.split("page:")[1])
     kb = build_search_keyboard(callback.from_user.id, page=page)
+    # Метод edit_reply_markup корректно работает и с текстовыми сообщениями, и с фото!
     await callback.message.edit_reply_markup(reply_markup=kb)
     await callback.answer()
 
@@ -188,10 +257,11 @@ async def callback_download(callback: CallbackQuery):
 
     await callback.answer()
     if not url:
-        await callback.message.edit_text("Срок действия выбора истёк. Повтори поиск.")
+        await callback.message.answer("Срок действия выбора истёк. Повтори поиск.")
         return
 
-    status_msg = await callback.message.edit_text("⏳ Загрузка выбранного трека...")
+    # Отправляем НОВОЕ сообщение со статусом, чтобы не трогать карточку артиста
+    status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
     await process_and_send_audio(callback.message.chat.id, url, status_msg)
 
 async def handle_health_check(request):
