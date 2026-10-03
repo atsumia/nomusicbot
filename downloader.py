@@ -48,22 +48,16 @@ def cyrillic_to_latin(text: str) -> str:
 def get_search_queries(raw_query: str) -> list:
     q = raw_query.strip().lower()
     variants = [raw_query.strip()]
-
-    # Разбивка слитных слов
     spaced = re.sub(r'(френдли)(таг)', r'\1 \2', q)
     spaced = re.sub(r'(friendly)(thug)', r'\1 \2', spaced)
     if spaced not in variants:
         variants.append(spaced)
-
-    # Транслитерация
     lat = cyrillic_to_latin(q)
     if lat not in variants:
         variants.append(lat)
-
     lat_spaced = cyrillic_to_latin(spaced)
     if lat_spaced not in variants:
         variants.append(lat_spaced)
-
     return variants
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
@@ -137,10 +131,11 @@ def format_ym_track(track):
         'title': track.title,
         'uploader': artists or "Артист",
         'url': f"ym://{track.id}",
+        'duration_ms': track.duration_ms or 0,
         'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
     }
 
-# --- Поиск по Яндекс Музыке ---
+# --- Обновленный поиск по Яндекс Музыке (с захватом фото для визуала) ---
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
     if not client:
@@ -150,16 +145,40 @@ async def search_yandex(query: str, limit: int = 15):
 
     for q in queries:
         try:
-            # 1. Сначала пробуем получить треки напрямую
             sr = await client.search(text=q, type_='all', page=0)
             if not sr:
                 continue
 
-            # Если Яндекс выдал блок треков — они уже отсортированы по релевантности и популярности!
-            if sr.tracks and sr.tracks.results:
-                return [format_ym_track(t) for t in sr.tracks.results[:limit]]
+            artist_name = q.title()
+            cover_url = None
 
-            # Если треков нет в общем поиске, пробуем точечный поиск по track
+            # Ищем фото артиста в блоке best или artists
+            if sr.best and sr.best.type == 'artist':
+                artist_name = sr.best.result.name
+                if sr.best.result.cover and sr.best.result.cover.uri:
+                    cover_url = f"https://{sr.best.result.cover.uri.replace('%%', '400x400')}"
+            elif sr.artists and sr.artists.results:
+                art = sr.artists.results[0]
+                artist_name = art.name
+                if art.cover and art.cover.uri:
+                    cover_url = f"https://{art.cover.uri.replace('%%', '400x400')}"
+
+            # Если треки найдены, упаковываем их вместе с фото!
+            if sr.tracks and sr.tracks.results:
+                tracks = [format_ym_track(t) for t in sr.tracks.results[:limit]]
+                
+                # Если нашли обложку, отдаем боту как "Профиль артиста" для генерации картинки
+                if cover_url:
+                    return {
+                        'type': 'artist',
+                        'artist_name': artist_name,
+                        'artist_photo': cover_url,
+                        'tracks': tracks
+                    }
+                # Если обложки нет, просто отдаем треки (fallback)
+                return tracks
+
+            # Если треков нет в общем поиске, пробуем точечный поиск
             tr_sr = await client.search(text=q, type_='track', page=0)
             if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
                 return [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
@@ -175,7 +194,7 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     
     tracks = await client.tracks([track_id])
     if not tracks:
-        raise Exception("Трек не найден в Яндекс Музыке")
+        raise Exception("Трек не найден")
     track = tracks[0]
     artists = ", ".join([a.name for a in track.artists if a.name])
     title = track.title
