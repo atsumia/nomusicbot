@@ -2,8 +2,16 @@ import os
 import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.filters import CommandStart, Command
+from aiogram.types import (
+    FSInputFile,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    BotCommand
+)
 from dotenv import load_dotenv
 
 # Подключаем наши модули
@@ -22,9 +30,21 @@ dp = Dispatcher()
 
 USER_SESSIONS = {}
 
+# --- Постоянная нижняя клавиатура (Reply Keyboard) ---
+
+def get_bottom_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    user = database.get_user(user_id)
+    mode_label = "Режим: Официальные" if user['search_mode'] == 'official' else "Режим: SoundCloud"
+    
+    keyboard = [
+        [KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="👤 Мой кабинет")],
+        [KeyboardButton(text=f"🎧 {mode_label}")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
 # --- Генераторы инлайн-клавиатур меню ---
 
-def get_main_menu(user_id):
+def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     user = database.get_user(user_id)
     mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
     
@@ -34,28 +54,75 @@ def get_main_menu(user_id):
         [InlineKeyboardButton(text=f"🎧 Режим: {mode_text}", callback_data="menu:toggle_mode")]
     ])
 
-def get_profile_menu():
+def get_profile_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❤️ Избранное", callback_data="menu:favorites"),
          InlineKeyboardButton(text="📜 История", callback_data="menu:history")],
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
     ])
 
-# --- Обработчики стартового меню ---
+# --- Стартовый хэндлер ---
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
-    # Регистрируем пользователя в БД
     username = message.from_user.username or message.from_user.first_name
     database.get_user(message.from_user.id, username)
     
+    reply_kb = get_bottom_reply_keyboard(message.from_user.id)
+    
     await message.answer(
         "👋 **Добро пожаловать в NoMusic!**\n\n"
-        "Я помогу тебе найти и скачать любые треки в высоком качестве.\n"
-        "Выбери действие в меню ниже:",
-        reply_markup=get_main_menu(message.from_user.id),
+        "Я помогу найти и скачать треки в высоком качестве.\n"
+        "Используй кнопки внизу или выбери действие в меню:",
+        reply_markup=reply_kb,
         parse_mode="Markdown"
     )
+    
+    # Дублируем инлайн-карточку приветствия
+    await message.answer(
+        "⚡️ **Панель управления:**",
+        reply_markup=get_main_menu(message.from_user.id)
+    )
+
+# --- Обработка нажатий на нижние кнопки Reply-клавиатуры ---
+
+@dp.message(F.text == "🔎 Поиск")
+async def reply_search_handler(message: types.Message):
+    await message.answer("📝 Напиши название трека, имя артиста или отправь ссылку:")
+
+@dp.message(F.text == "👤 Мой кабинет")
+async def reply_profile_handler(message: types.Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or message.from_user.first_name
+    user = database.get_user(user_id, username)
+    
+    mode_name = "🏛 Официальные релизы" if user['search_mode'] == "official" else "🎧 Ремиксы (SoundCloud)"
+    
+    text = (
+        f"👤 **Кабинет пользователя {username}**\n\n"
+        f"⬇️ **Скачано треков:** {user['download_count']}\n"
+        f"🔎 **Предпочитаемый поиск:** {mode_name}\n\n"
+        f"_Здесь ты можешь посмотреть историю загрузок и сохраненные треки._"
+    )
+    await message.answer(text, reply_markup=get_profile_menu(), parse_mode="Markdown")
+
+@dp.message(F.text.startswith("🎧 Режим:"))
+async def reply_toggle_mode_handler(message: types.Message):
+    user_id = message.from_user.id
+    user = database.get_user(user_id)
+    new_mode = "remix" if user['search_mode'] == "official" else "official"
+    
+    database.set_mode(user_id, new_mode)
+    reply_kb = get_bottom_reply_keyboard(user_id)
+    
+    mode_name = "Официальные релизы" if new_mode == "official" else "SoundCloud"
+    await message.answer(
+        f"✅ Режим поиска переключен на: **{mode_name}**",
+        reply_markup=reply_kb,
+        parse_mode="Markdown"
+    )
+
+# --- Инлайн-навигация ---
 
 @dp.callback_query(F.data == "menu:main")
 async def show_main_menu(callback: CallbackQuery):
@@ -114,8 +181,11 @@ async def show_history(callback: CallbackQuery):
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_db:history:{db_id}")])
         
     buttons.append([InlineKeyboardButton(text="🔙 Назад в кабинет", callback_data="menu:profile")])
-    await callback.message.edit_text("📜 **Последние 10 скачанных треков:**\n_Нажми на любой трек, чтобы скачать его снова_", 
-                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
+    await callback.message.edit_text(
+        "📜 **Последние скачанные треки:**\n_Нажми на любой трек, чтобы скачать его снова_", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="Markdown"
+    )
     await callback.answer()
 
 @dp.callback_query(F.data == "menu:favorites")
@@ -131,18 +201,22 @@ async def show_favorites(callback: CallbackQuery):
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_db:favorites:{db_id}")])
         
     buttons.append([InlineKeyboardButton(text="🔙 Назад в кабинет", callback_data="menu:profile")])
-    await callback.message.edit_text("❤️ **Твое избранное:**\n_Нажми на трек для скачивания_", 
-                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
+    await callback.message.edit_text(
+        "❤️ **Твое избранное:**\n_Нажми на трек для скачивания_", 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="Markdown"
+    )
     await callback.answer()
 
 # --- Кнопка "В избранное" под скачанным треком ---
+
 @dp.callback_query(F.data.startswith("fav:"))
 async def toggle_fav_callback(callback: CallbackQuery):
     track_id = callback.data.split("fav:")[1]
-    user_id = callback.fromuser.id if hasattr(callback, "fromuser") else callback.from_user.id
+    user_id = callback.from_user.id
     
     is_now_fav = database.toggle_favorite(user_id, track_id)
-    btn_text = "❤️️ В избранном" if is_now_fav else "🤍 В избранное"
+    btn_text = "❤️ В избранном" if is_now_fav else "🤍 В избранное"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=btn_text, callback_data=f"fav:{track_id}")
@@ -168,7 +242,6 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     buttons = []
     for idx, item in enumerate(current_items, start=start_idx + 1):
         short_id = f"{user_id}_{item['id']}"[:50]
-        # Сохраняем весь объект трека для быстрого доступа
         session.setdefault("items", {})[short_id] = item 
         
         btn_text = f"{idx}. {item['uploader']} - {item['title']}"
@@ -200,14 +273,12 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             await status_msg.edit_text("❌ Размер файла превышает лимит Telegram (50 МБ).")
             return
 
-        # Добавляем в историю и счетчик в БД
         database.add_download(user_id, track_id, track['title'], track['artist'], url)
 
         await status_msg.edit_text("🚀 Отправляю файл...")
         audio = FSInputFile(path=file_path, filename=f"{track['artist']} - {track['title']}.mp3")
         thumbnail = FSInputFile(thumb_path) if thumb_path and os.path.exists(thumb_path) else None
 
-        # Проверяем, в избранном ли трек
         is_fav = database.is_favorite(user_id, track_id)
         fav_text = "❤️ В избранном" if is_fav else "🤍 В избранное"
         kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -221,7 +292,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             title=track['title'],
             duration=track['duration'],
             thumbnail=thumbnail,
-            reply_markup=kb # Кнопка избранного прямо под треком!
+            reply_markup=kb
         )
         await status_msg.delete()
     except Exception as e:
@@ -243,7 +314,6 @@ async def handle_search(message: types.Message):
     query = message.text.strip()
     user_id = message.from_user.id
     
-    # Берем режим поиска из базы данных
     user = database.get_user(user_id, message.from_user.username or message.from_user.first_name)
     mode = user['search_mode']
     
@@ -301,7 +371,6 @@ async def callback_pagination(callback: CallbackQuery):
 async def callback_noop(callback: CallbackQuery):
     await callback.answer()
 
-# Скачивание из стандартного поиска
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
     short_id = callback.data.split("dl:")[1]
@@ -317,11 +386,10 @@ async def callback_download(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
     await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
 
-# Скачивание прямо из Истории или Избранного
 @dp.callback_query(F.data.startswith("dl_db:"))
 async def callback_dl_db(callback: CallbackQuery):
     parts = callback.data.split(":")
-    table = parts[1] # history или favorites
+    table = parts[1]
     db_id = parts[2]
     
     record = database.get_track_by_db_id(table, db_id)
@@ -351,8 +419,15 @@ async def start_dummy_web_server():
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
 
+async def set_bot_commands():
+    commands = [
+        BotCommand(command="start", description="Главное меню и клавиатура"),
+    ]
+    await bot.set_my_commands(commands)
+
 async def main():
-    database.init_db() # Инициализация БД при запуске
+    database.init_db()
+    await set_bot_commands()
     await start_dummy_web_server()
     print("Бот запущен...")
     await dp.start_polling(bot)
