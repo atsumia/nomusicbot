@@ -23,7 +23,8 @@ def clean_title(title: str) -> str:
         title = re.sub(pattern, '', title, flags=re.IGNORECASE)
     return title.strip()
 
-def search_tracks_sync(query: str, limit: int = 5):
+def search_tracks_sync(query: str, limit: int = 15):
+    """Поиск треков с сортировкой по соответствию словам запроса независимо от их порядка."""
     search_opts = {
         'format': 'bestaudio/best',
         'quiet': True,
@@ -32,19 +33,33 @@ def search_tracks_sync(query: str, limit: int = 5):
     }
     with yt_dlp.YoutubeDL(search_opts) as ydl:
         res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
-        entries = res.get('entries', [])
+        entries = res.get('entries', []) or []
+        
+        words = set(re.findall(r'\w+', query.lower()))
         results = []
+
         for entry in entries:
+            title = entry.get('title', 'Без названия')
+            uploader = entry.get('uploader', 'Неизвестный автор')
+            full_text = f"{uploader} {title}".lower()
+            
+            # Считаем, сколько слов из запроса совпало с треком
+            matches = sum(1 for w in words if w in full_text)
+
             results.append({
-                'id': entry.get('id'),
-                'title': entry.get('title', 'Без названия'),
-                'uploader': entry.get('uploader', 'Неизвестный автор'),
+                'id': str(entry.get('id')),
+                'title': title,
+                'uploader': uploader,
                 'url': entry.get('url') or entry.get('webpage_url'),
-                'duration': entry.get('duration') or 0
+                'duration': entry.get('duration') or 0,
+                'matches': matches
             })
+
+        # Сортируем: сначала те, где больше всего совпадений слов
+        results.sort(key=lambda x: x['matches'], reverse=True)
         return results
 
-async def search_tracks(query: str, limit: int = 5):
+async def search_tracks(query: str, limit: int = 15):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, search_tracks_sync, query, limit)
 
