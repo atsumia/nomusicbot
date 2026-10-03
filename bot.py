@@ -23,7 +23,7 @@ async def start_handler(message: types.Message):
     await message.answer(
         "👋 **NoMusic**\n\n"
         "• Отправь **ссылку** на трек\n"
-        "• Или отправь **название** — я найду варианты для прослушивания и загрузки.",
+        "• Или отправь **название** — по умолчанию ищу официальные релизы в высоком качестве.",
         parse_mode="Markdown"
     )
 
@@ -62,7 +62,6 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
 
     buttons.append(nav_row)
 
-    # Кнопка переключения режимов
     if mode == "official":
         mode_btn = InlineKeyboardButton(text="🎧 Ремиксы (SoundCloud)", callback_data="toggle_mode:remix")
     else:
@@ -75,7 +74,7 @@ async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Messa
     file_path = None
     thumb_path = None
     try:
-        await status_msg.edit_text("⏳ Обрабатываю аудиозапись...")
+        await status_msg.edit_text("⏳ Загружаю аудиозапись...")
         track = await download_track(url)
         file_path = track['file_path']
         thumb_path = track.get('thumb_path')
