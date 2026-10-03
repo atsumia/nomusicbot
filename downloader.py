@@ -152,24 +152,32 @@ async def search_yandex(query: str, limit: int = 15):
             artist_name = q.title()
             cover_url = None
 
-            # Если Яндекс решил, что лучший результат - это профиль артиста
+            # 1. Если Яндекс сам отдал артиста как лучший результат
             if sr.best and sr.best.type == 'artist':
                 is_artist_search = True
                 artist_name = sr.best.result.name
                 if sr.best.result.cover and sr.best.result.cover.uri:
                     cover_url = f"https://{sr.best.result.cover.uri.replace('%%', '400x400')}"
-            # Или если артист есть в топе выдачи
-            elif sr.artists and sr.artists.results:
-                is_artist_search = True
+
+            # 2. УМНАЯ ПРОВЕРКА: Если запрос совпадает с именем артиста
+            if sr.artists and sr.artists.results:
                 art = sr.artists.results[0]
-                artist_name = art.name
-                if art.cover and art.cover.uri:
-                    cover_url = f"https://{art.cover.uri.replace('%%', '400x400')}"
+                art_name_lower = art.name.lower()
+                q_lower = q.lower()
+                
+                # Если ввели просто имя (например "macan" == "macan" или "tape" входит в "big baby tape")
+                # Но отсекает длинные запросы вроде "по барабану капсайз" (оно не входит в "cupsize")
+                if q_lower == art_name_lower or q_lower in art_name_lower.split():
+                    is_artist_search = True
+                
+                if is_artist_search and not cover_url:
+                    artist_name = art.name
+                    if art.cover and art.cover.uri:
+                        cover_url = f"https://{art.cover.uri.replace('%%', '400x400')}"
 
             if sr.tracks and sr.tracks.results:
                 tracks = [format_ym_track(t) for t in sr.tracks.results[:limit]]
                 
-                # РАЗГРАНИЧЕНИЕ: Карточка рисуется ТОЛЬКО если искали артиста
                 if is_artist_search:
                     if not cover_url and sr.tracks.results[0].cover_uri:
                         cover_url = f"https://{sr.tracks.results[0].cover_uri.replace('%%', '400x400')}"
@@ -180,7 +188,6 @@ async def search_yandex(query: str, limit: int = 15):
                         'tracks': tracks
                     }
                 else:
-                    # Если искали конкретную песню - просто возвращаем список треков
                     return tracks
 
             # Запасной прямой поиск по трекам (всегда возвращает список, без карточки)
@@ -413,7 +420,6 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
         if ym_results:
             return ym_results
 
-    # Поиск по SoundCloud всегда возвращает список треков (без карточки)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, search_sc_sync, query, limit)
 
