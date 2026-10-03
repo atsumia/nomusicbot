@@ -135,7 +135,6 @@ def format_ym_track(track):
         'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
     }
 
-# --- ОБНОВЛЕНИЕ: Всегда отдаем словарь для генерации картинки ---
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
     if not client:
@@ -152,7 +151,6 @@ async def search_yandex(query: str, limit: int = 15):
             artist_name = q.title()
             cover_url = None
 
-            # Ищем фото профиля артиста
             if sr.best and sr.best.type == 'artist':
                 artist_name = sr.best.result.name
                 if sr.best.result.cover and sr.best.result.cover.uri:
@@ -163,15 +161,12 @@ async def search_yandex(query: str, limit: int = 15):
                 if art.cover and art.cover.uri:
                     cover_url = f"https://{art.cover.uri.replace('%%', '400x400')}"
 
-            # Если треки найдены
             if sr.tracks and sr.tracks.results:
                 tracks = [format_ym_track(t) for t in sr.tracks.results[:limit]]
                 
-                # ФОЛЛБЭК: Если фото профиля нет, берем обложку самого популярного трека!
                 if not cover_url and sr.tracks.results[0].cover_uri:
                     cover_url = f"https://{sr.tracks.results[0].cover_uri.replace('%%', '400x400')}"
                     
-                # ВСЕГДА возвращаем dict, чтобы запустить visualizer.py
                 return {
                     'type': 'artist',
                     'artist_name': tracks[0]['uploader'] if tracks else artist_name,
@@ -179,7 +174,6 @@ async def search_yandex(query: str, limit: int = 15):
                     'tracks': tracks
                 }
 
-            # Запасной прямой поиск по трекам
             tr_sr = await client.search(text=q, type_='track', page=0)
             if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
                 tracks = [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
@@ -259,7 +253,6 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         'duration': duration
     }
 
-# --- SoundCloud ---
 def search_sc_sync(query: str, limit: int = 15):
     queries = get_search_queries(query)
     search_opts = {
@@ -414,15 +407,24 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'duration': int(raw_info.get('duration', 0))
     }
 
+# ИСПРАВЛЕНИЕ: Теперь SoundCloud ТОЖЕ всегда отдает словарь, чтобы бот запустил генерацию картинки.
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     if mode == "official":
         ym_results = await search_yandex(query, limit=limit)
         if ym_results:
             return ym_results
 
-    # Фоллбэк на SoundCloud
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, search_sc_sync, query, limit)
+    sc_results = await loop.run_in_executor(None, search_sc_sync, query, limit)
+    
+    if sc_results:
+        return {
+            'type': 'artist',
+            'artist_name': sc_results[0]['uploader'],
+            'artist_photo': None,
+            'tracks': sc_results
+        }
+    return []
 
 async def download_track(url: str) -> dict:
     if url.startswith("ym://"):
