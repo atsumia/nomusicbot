@@ -86,7 +86,7 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
     photo_raw_path = f"/tmp/artist_photo_{uid}.jpg"
     photo_ready = False
 
-    # 1. Сначала пробуем скачать фото из Яндекса
+    # 1. Пробуем скачать фото из Яндекса (с заголовками)
     if photo_url:
         try:
             async with aiohttp.ClientSession() as session:
@@ -99,21 +99,23 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
         except Exception:
             pass
 
-    # 2. ФОЛЛБЭК: Если Яндекс заблокировал (или фото нет), берем обложку из открытого API iTunes (Apple Music)
+    # 2. ФОЛЛБЭК: Apple Music API (теперь тоже с заголовками)
     if not photo_ready and artist_name:
         try:
             safe_term = urllib.parse.quote(artist_name)
             itunes_url = f"https://itunes.apple.com/search?term={safe_term}&entity=song&limit=1"
             
             async with aiohttp.ClientSession() as session:
-                async with session.get(itunes_url) as resp:
+                # Маскируемся под браузер при обращении к API
+                async with session.get(itunes_url, headers=HEADERS) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        # Игнорируем строгий MIME-тип, если Apple отдаст text/javascript вместо json
+                        data = await resp.json(content_type=None)
                         if data.get('results'):
-                            # Получаем картинку и меняем размер 100x100 на высокое разрешение 600x600
                             cover_url = data['results'][0].get('artworkUrl100', '').replace('100x100bb', '600x600bb')
                             if cover_url:
-                                async with session.get(cover_url) as img_resp:
+                                # Маскируемся под браузер при скачивании самой картинки с CDN
+                                async with session.get(cover_url, headers=HEADERS) as img_resp:
                                     if img_resp.status == 200:
                                         raw_data = await img_resp.read()
                                         with open(photo_raw_path, "wb") as f:
