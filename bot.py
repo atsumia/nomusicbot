@@ -16,21 +16,22 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Сессии поиска: { user_id: { "results": [...], "urls": { short_id: url } } }
+# Сессии поиска
 USER_SESSIONS = {}
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
     await message.answer(
         "👋 **NoMusic**\n\n"
-        "• Отправь **ссылку** на трек\n"
-        "• Или просто напиши **название** — я найду варианты для скачивания.",
+        "• Отправь **ссылку** на трек (SoundCloud / YouTube)\n"
+        "• Или отправь **название** — по умолчанию ищу официальные релизы без лишних ремиксов.",
         parse_mode="Markdown"
     )
 
 def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     session = USER_SESSIONS.get(user_id, {})
     results = session.get("results", [])
+    mode = session.get("mode", "official")
     
     items_per_page = 5
     total_pages = max(1, (len(results) + items_per_page - 1) // items_per_page)
@@ -41,6 +42,8 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     current_items = results[start_idx:end_idx]
 
     buttons = []
+    
+    # Кнопки с треками
     for idx, item in enumerate(current_items, start=start_idx + 1):
         short_id = f"{user_id}_{item['id']}"[:50]
         session.setdefault("urls", {})[short_id] = item['url']
@@ -50,7 +53,7 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
             btn_text = btn_text[:39] + "..."
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl:{short_id}")])
 
-    # Пагинация (Назад / Страница / Вперёд)
+    # Пагинация
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page:{page - 1}"))
@@ -61,19 +64,28 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         nav_row.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"page:{page + 1}"))
 
     buttons.append(nav_row)
+
+    # Переключатель режимов: Официальные релизы / Ремиксы SoundCloud
+    if mode == "official":
+        mode_btn = InlineKeyboardButton(text="🔄 Включить ремиксы (SoundCloud)", callback_data="toggle_mode:remix")
+    else:
+        mode_btn = InlineKeyboardButton(text="🏛 Включить оригинал (Официальные)", callback_data="toggle_mode:official")
+    buttons.append([mode_btn])
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Message):
+    file_path = None
+    thumb_path = None
     try:
         await status_msg.edit_text("⏳ Обрабатываю аудиозапись...")
         track = await download_track(url)
         file_path = track['file_path']
+        thumb_path = track.get('thumb_path')
 
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
         if file_size_mb > 49.5:
             await status_msg.edit_text("❌ Размер файла превышает лимит Telegram (50 МБ).")
-            if os.path.exists(file_path):
-                os.remove(file_path)
             return
 
         await status_msg.edit_text("🚀 Отправляю файл...")
@@ -81,45 +93,85 @@ async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Messa
             path=file_path,
             filename=f"{track['artist']} - {track['title']}.mp3"
         )
+        
+        # Передаем thumbnail для отображения обложки в Telegram
+        thumbnail = FSInputFile(thumb_path) if thumb_path and os.path.exists(thumb_path) else None
+
         await bot.send_audio(
             chat_id=chat_id,
             audio=audio,
             performer=track['artist'],
             title=track['title'],
-            duration=track['duration']
+            duration=track['duration'],
+            thumbnail=thumbnail
         )
         await status_msg.delete()
-        if os.path.exists(file_path):
-            os.remove(file_path)
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Ошибка загрузки: {str(e)}")
+    finally:
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+        if thumb_path and os.path.exists(thumb_path):
+            os.remove(thumb_path)
 
 @dp.message(F.text.regexp(r'https?://[^\s]+'))
 async def handle_url(message: types.Message):
     url = message.text.strip()
-    status_msg = await message.answer("⏳ Загрузка...")
+    status_msg = await message.answer("⏳ Загрузка ссылки...")
     await process_and_send_audio(message.chat.id, url, status_msg)
 
 @dp.message(F.text)
-async def handle_search(message: types.Message):
+async def handle_search(message: types.Message, mode: str = "official"):
     query = message.text.strip()
-    status_msg = await message.answer("🔎 Ищу варианты...")
+    mode_text = "официальные релизы" if mode == "official" else "ремиксы SoundCloud"
+    status_msg = await message.answer(f"🔎 Ищу {mode_text}...")
     
     try:
-        results = await search_tracks(query, limit=15)
+        results = await search_tracks(query, mode=mode, limit=15)
         if not results:
-            await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос.")
+            await status_msg.edit_text(f"Ничего не нашлось в режиме «{mode_text}». Попробуй переключить режим.")
             return
 
         USER_SESSIONS[message.from_user.id] = {
+            "query": query,
+            "mode": mode,
             "results": results,
             "urls": {}
         }
 
         kb = build_search_keyboard(message.from_user.id, page=0)
-        await status_msg.edit_text("Выбери трек из списка:", reply_markup=kb)
+        mode_header = "🏛 Официальные релизы" if mode == "official" else "🎧 Ремиксы (SoundCloud)"
+        await status_msg.edit_text(f"Выбери трек ({mode_header}):", reply_markup=kb)
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
+
+@dp.callback_query(F.data.startswith("toggle_mode:"))
+async def callback_toggle_mode(callback: CallbackQuery):
+    new_mode = callback.data.split("toggle_mode:")[1]
+    user_id = callback.from_user.id
+    session = USER_SESSIONS.get(user_id)
+    
+    if not session or not session.get("query"):
+        await callback.answer("Сессия истекла. Отправь запрос заново.", show_alert=True)
+        return
+
+    query = session["query"]
+    mode_text = "официальные релизы" if new_mode == "official" else "ремиксы SoundCloud"
+    await callback.message.edit_text(f"🔄 Переключаю режим на {mode_text}...")
+    
+    results = await search_tracks(query, mode=new_mode, limit=15)
+    if not results:
+        await callback.message.edit_text(f"Ничего не найдено в режиме «{mode_text}».")
+        return
+
+    session["mode"] = new_mode
+    session["results"] = results
+    session["urls"] = {}
+
+    kb = build_search_keyboard(user_id, page=0)
+    mode_header = "🏛 Официальные релизы" if new_mode == "official" else "🎧 Ремиксы (SoundCloud)"
+    await callback.message.edit_text(f"Выбери трек ({mode_header}):", reply_markup=kb)
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("page:"))
 async def callback_pagination(callback: CallbackQuery):
