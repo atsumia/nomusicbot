@@ -2,6 +2,7 @@ import os
 import asyncio
 import aiohttp
 import uuid
+import urllib.parse
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 WIDTH, HEIGHT = 1000, 500
@@ -13,14 +14,12 @@ APPLE_TEXT_DARK = (29, 29, 31, 255)
 APPLE_TEXT_GRAY = (134, 134, 139, 255)
 APPLE_CORAL = (250, 45, 72, 255)
 
-# ИСПРАВЛЕНИЕ 1: Шрифт Roboto (100% поддержка кириллицы)
 FONT_BOLD_URL = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Bold.ttf"
 FONT_REG_URL = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf"
 
 FONT_BOLD_PATH = "/tmp/Roboto-Bold.ttf"
 FONT_REG_PATH = "/tmp/Roboto-Regular.ttf"
 
-# ИСПРАВЛЕНИЕ 2: Заголовок браузера для обхода блокировки фото от Яндекса
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
 async def download_file(url, filename):
@@ -82,16 +81,15 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
     # --- ЛЕВАЯ ЧАСТЬ: ФОТО АРТИСТА ---
     photo_box = [40, 40, 390, 460]
     photo_radius = 24
-    
     draw_rounded_rect_with_shadow(img, photo_box, photo_radius, APPLE_CARD_BG, shadow_blur=20)
     
     photo_raw_path = f"/tmp/artist_photo_{uid}.jpg"
     photo_ready = False
 
+    # 1. Сначала пробуем скачать фото из Яндекса
     if photo_url:
         try:
             async with aiohttp.ClientSession() as session:
-                # Отправляем запрос с заголовками, чтобы Яндекс отдал фото
                 async with session.get(photo_url, headers=HEADERS) as resp:
                     if resp.status == 200:
                         raw_data = await resp.read()
@@ -101,6 +99,30 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
         except Exception:
             pass
 
+    # 2. ФОЛЛБЭК: Если Яндекс заблокировал (или фото нет), берем обложку из открытого API iTunes (Apple Music)
+    if not photo_ready and artist_name:
+        try:
+            safe_term = urllib.parse.quote(artist_name)
+            itunes_url = f"https://itunes.apple.com/search?term={safe_term}&entity=song&limit=1"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(itunes_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get('results'):
+                            # Получаем картинку и меняем размер 100x100 на высокое разрешение 600x600
+                            cover_url = data['results'][0].get('artworkUrl100', '').replace('100x100bb', '600x600bb')
+                            if cover_url:
+                                async with session.get(cover_url) as img_resp:
+                                    if img_resp.status == 200:
+                                        raw_data = await img_resp.read()
+                                        with open(photo_raw_path, "wb") as f:
+                                            f.write(raw_data)
+                                        photo_ready = True
+        except Exception as e:
+            print(f"iTunes fallback error: {e}")
+
+    # 3. Вставляем готовое фото на карточку
     if photo_ready:
         try:
             with Image.open(photo_raw_path) as avatar:
@@ -134,7 +156,6 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
 
     # --- ПРАВАЯ ЧАСТЬ: ЗАГОЛОВКИ И ТРЕКИ ---
     text_x = 440
-    
     draw.text((text_x, 45), "ГЛАВНЫЕ ТРЕКИ", fill=APPLE_CORAL, font=font_sub)
     
     display_name = artist_name.upper() if artist_name else "ИСПОЛНИТЕЛЬ"
