@@ -26,10 +26,6 @@ async def get_ym_client():
     return ym_client
 
 def cyrillic_to_latin(text: str) -> str:
-    """
-    Фонетическая транслитерация кириллицы в латиницу для музыкальных запросов.
-    Обрабатывает сложные буквосочетания (дж, тс, кс, я, ю, ш, щ, ч).
-    """
     phonetic_rules = [
         (r'дж', 'j'),
         (r'таг', 'thug'),
@@ -49,7 +45,6 @@ def cyrillic_to_latin(text: str) -> str:
         (r'ай', 'i'),
         (r'ей', 'ey')
     ]
-    
     t = text.lower()
     for cyr, lat in phonetic_rules:
         t = re.sub(cyr, lat, t)
@@ -60,11 +55,7 @@ def cyrillic_to_latin(text: str) -> str:
         'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f',
         'ы': 'y', 'э': 'e', 'ъ': '', 'ь': ''
     }
-    
-    res = []
-    for ch in t:
-        res.append(char_map.get(ch, ch))
-    return "".join(res).strip()
+    return "".join([char_map.get(ch, ch) for ch in t]).strip()
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
     tag_detected = None
@@ -117,8 +108,7 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
             formatted_tag = " + ".join([w.strip().capitalize() for w in tag_detected.split('+')])
         tag_suffix = f" ({formatted_tag})"
 
-    final_title = f"{base_title}{tag_suffix}"
-    return base_artist, final_title
+    return base_artist, f"{base_title}{tag_suffix}"
 
 def prepare_telegram_cover(raw_img_path: str, output_path: str):
     try:
@@ -137,51 +127,73 @@ def prepare_telegram_cover(raw_img_path: str, output_path: str):
     except Exception:
         return None
 
-# --- Поиск и загрузка из Яндекс Музыки ---
-async def search_yandex_single(client, text: str, limit: int = 15):
-    try:
-        search_result = await client.search(text=text, type_='track', page=0)
-        if not search_result or not search_result.tracks:
-            return []
-        res = []
-        for track in search_result.tracks.results[:limit]:
-            artists = ", ".join([a.name for a in track.artists if a.name])
-            res.append({
-                'id': f"ym_{track.id}",
-                'raw_id': str(track.id),
-                'title': track.title,
-                'uploader': artists or "Артист",
-                'url': f"ym://{track.id}",
-                'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
-            })
-        return res
-    except Exception:
-        return []
+# --- Поиск по Яндекс Музыке с поддержкой топа артистов ---
+def format_ym_track(track):
+    artists = ", ".join([a.name for a in track.artists if a.name])
+    return {
+        'id': f"ym_{track.id}",
+        'raw_id': str(track.id),
+        'title': track.title,
+        'uploader': artists or "Артист",
+        'url': f"ym://{track.id}",
+        'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
+    }
 
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
     if not client:
         return []
 
-    # 1. Поиск по прямому запросу
-    tasks = [search_yandex_single(client, query, limit=limit)]
-
-    # 2. Если в запросе есть кириллица — добавляем транслитерированный вариант
+    queries_to_try = [query]
     if re.search(r'[а-яА-ЯёЁ]', query):
-        lat_query = cyrillic_to_latin(query)
-        tasks.append(search_yandex_single(client, lat_query, limit=limit))
+        queries_to_try.append(cyrillic_to_latin(query))
 
-    all_results = await asyncio.gather(*tasks)
+    for q in queries_to_try:
+        try:
+            # Ищем по всем категориям (type_='all')
+            sr = await client.search(text=q, type_='all', page=0)
+            if not sr:
+                continue
 
-    # Дедупликация треков по ID
-    seen_ids = set()
-    combined = []
-    for batch in all_results:
-        for t in batch:
-            if t['raw_id'] not in seen_ids:
-                seen_ids.add(t['raw_id'])
-                combined.append(t)
-    return combined[:limit]
+            # 1. Если найден артист в качестве главного результата
+            artist_target = None
+            if sr.best and sr.best.type == 'artist':
+                artist_target = sr.best.result
+            elif sr.artists and sr.artists.results:
+                top_artist = sr.artists.results[0]
+                q_clean = q.lower().replace(' ', '')
+                a_name = top_artist.name.lower().replace(' ', '')
+                if q_clean in a_name or a_name in q_clean:
+                    artist_target = top_artist
+
+            # Если пользователь искал артиста — забираем его хиты по убыванию популярности
+            if artist_target:
+                tracks = []
+                try:
+                    tr_page = await client.artists_tracks(artist_target.id, page=0, page_size=limit)
+                    if tr_page and tr_page.tracks:
+                        tracks = tr_page.tracks
+                except Exception:
+                    pass
+
+                if not tracks:
+                    try:
+                        full_artist = (await client.artists([artist_target.id]))[0]
+                        tracks = full_artist.popular_tracks or []
+                    except Exception:
+                        pass
+
+                if tracks:
+                    return [format_ym_track(t) for t in tracks[:limit]]
+
+            # 2. Если искали конкретный трек
+            if sr.tracks and sr.tracks.results:
+                return [format_ym_track(t) for t in sr.tracks.results[:limit]]
+
+        except Exception as e:
+            print(f"YM search error for '{q}': {e}")
+
+    return []
 
 async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict:
     client = await get_ym_client()
@@ -240,9 +252,8 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         'duration': duration
     }
 
-# --- Поиск и загрузка из SoundCloud ---
+# --- SoundCloud (фоллбэк и режим ремиксов) ---
 def search_sc_single_query(query: str, limit: int = 15):
-    clean_q = query.strip()
     search_opts = {
         'format': 'bestaudio/best',
         'quiet': True,
@@ -251,15 +262,13 @@ def search_sc_single_query(query: str, limit: int = 15):
     }
     with yt_dlp.YoutubeDL(search_opts) as ydl:
         try:
-            res = ydl.extract_info(f"scsearch{limit}:{clean_q}", download=False)
+            res = ydl.extract_info(f"scsearch{limit}:{query.strip()}", download=False)
             return res.get('entries', []) or []
         except Exception:
             return []
 
 def search_sc_sync(query: str, limit: int = 15):
     entries = search_sc_single_query(query, limit=limit)
-    
-    # Если на кириллице ничего не нашлось или мало треков — ищем транслит
     if re.search(r'[а-яА-ЯёЁ]', query):
         lat_q = cyrillic_to_latin(query)
         entries += search_sc_single_query(lat_q, limit=limit)
