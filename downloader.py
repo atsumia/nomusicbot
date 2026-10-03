@@ -28,28 +28,44 @@ def clean_title(title: str) -> str:
         title = re.sub(pattern, '', title, flags=re.IGNORECASE)
     return title.strip()
 
+def get_base_ydl_opts(output_template: str = None) -> dict:
+    opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        # Обход блокировок хостингов: маскировка под мобильные клиенты
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'mweb']
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+        }
+    }
+    if output_template:
+        opts['outtmpl'] = output_template
+        opts['writethumbnail'] = True
+        opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '320',
+        }]
+    return opts
+
 def search_tracks_sync(query: str, mode: str = "official", limit: int = 15):
-    """
-    mode: 'official' (YouTube Music / YouTube) или 'remix' (SoundCloud)
-    """
-    # Нормализуем запрос: разбиваем возможные склейки цифр и букв
     clean_q = re.sub(r'([a-zA-Zа-яА-Я])(\d+)', r'\1 \2', query)
     clean_q = re.sub(r'(\d+)([a-zA-Zа-яА-Я])', r'\1 \2', clean_q)
     
-    # Для официальных релизов используем YouTube с фильтрацией
     if mode == "official":
         search_engine = f"ytsearch{limit * 2}:{clean_q}"
     else:
         search_engine = f"scsearch{limit}:{clean_q}"
 
-    search_opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': 'in_playlist',
-    }
+    opts = get_base_ydl_opts()
+    opts['extract_flat'] = 'in_playlist'
 
-    with yt_dlp.YoutubeDL(search_opts) as ydl:
+    with yt_dlp.YoutubeDL(opts) as ydl:
         try:
             res = ydl.extract_info(search_engine, download=False)
             entries = res.get('entries', []) or []
@@ -66,14 +82,10 @@ def search_tracks_sync(query: str, mode: str = "official", limit: int = 15):
             uploader = entry.get('uploader') or entry.get('channel') or 'Артист'
             full_text = f"{uploader} {title}".lower()
 
-            # Фильтрация ремиксов для официального режима
-            if mode == "official":
-                if any(sw in full_text for sw in STOP_WORDS_REMIX):
-                    continue
+            if mode == "official" and any(sw in full_text for sw in STOP_WORDS_REMIX):
+                continue
 
-            # Ранжирование по наличию ключевых слов независимо от порядка
             matches = sum(1 for w in words if w in full_text)
-
             url = entry.get('url')
             if not url or not url.startswith('http'):
                 url = entry.get('webpage_url')
@@ -90,7 +102,6 @@ def search_tracks_sync(query: str, mode: str = "official", limit: int = 15):
             if len(results) >= limit:
                 break
 
-        # Сортировка: максимальное совпадение слов в заголовке/авторе
         results.sort(key=lambda x: x['matches'], reverse=True)
         return results
 
@@ -99,10 +110,18 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     return await loop.run_in_executor(None, search_tracks_sync, query, mode, limit)
 
 def prepare_telegram_cover(raw_img_path: str, output_path: str):
-    """Telegram требует квадратную JPEG обложку до 320x320 для thumbnail."""
     try:
         with Image.open(raw_img_path) as img:
             img = img.convert('RGB')
+            # Обрезаем до идеального квадрата по центру
+            w, h = img.size
+            min_dim = min(w, h)
+            left = (w - min_dim) / 2
+            top = (h - min_dim) / 2
+            right = (w + min_dim) / 2
+            bottom = (h + min_dim) / 2
+            img = img.crop((left, top, right, bottom))
+            
             img.thumbnail((320, 320))
             img.save(output_path, 'JPEG', quality=85)
         return output_path
@@ -112,19 +131,7 @@ def prepare_telegram_cover(raw_img_path: str, output_path: str):
 async def download_track(url: str, output_dir: str = "/tmp") -> dict:
     os.makedirs(output_dir, exist_ok=True)
     temp_template = os.path.join(output_dir, '%(id)s.%(ext)s')
-
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': temp_template,
-        'writethumbnail': True,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '320',
-        }],
-        'quiet': True,
-        'no_warnings': True,
-    }
+    ydl_opts = get_base_ydl_opts(temp_template)
 
     loop = asyncio.get_event_loop()
 
@@ -145,7 +152,6 @@ async def download_track(url: str, output_dir: str = "/tmp") -> dict:
     final_artist = fallback_artist
     cover_url = None
 
-    # Попытка распознать через Shazam
     try:
         out = await shazam.recognize(mp3_path)
         track_info = out.get('track')
@@ -154,10 +160,9 @@ async def download_track(url: str, output_dir: str = "/tmp") -> dict:
             final_artist = track_info.get('subtitle', fallback_artist)
             images = track_info.get('images', {})
             cover_url = images.get('coverarthq') or images.get('coverart')
-    except Exception as e:
-        print(f"Shazam error: {e}")
+    except Exception:
+        pass
 
-    # Загружаем или находим локальную обложку
     cover_file = f"{base_path}_thumb.jpg"
     thumb_path = None
 
@@ -167,18 +172,17 @@ async def download_track(url: str, output_dir: str = "/tmp") -> dict:
                 async with session.get(cover_url) as resp:
                     if resp.status == 200:
                         raw_data = await resp.read()
-                        raw_cover_path = f"{base_path}_raw.jpg"
-                        with open(raw_cover_path, "wb") as f:
+                        raw_path = f"{base_path}_raw.jpg"
+                        with open(raw_path, "wb") as f:
                             f.write(raw_data)
-                        thumb_path = prepare_telegram_cover(raw_cover_path, cover_file)
-                        if os.path.exists(raw_cover_path):
-                            os.remove(raw_cover_path)
-        except Exception as e:
-            print(f"Cover download error: {e}")
+                        thumb_path = prepare_telegram_cover(raw_path, cover_file)
+                        if os.path.exists(raw_path):
+                            os.remove(raw_path)
+        except Exception:
+            pass
 
-    # Если Shazam не дал ссылку, проверяем обложку от yt-dlp
     if not thumb_path:
-        for ext in ['.jpg', '.webp', '.png']:
+        for ext in ['.jpg', '.webp', '.png', '.jpeg']:
             possible = f"{base_path}{ext}"
             if os.path.exists(possible):
                 thumb_path = prepare_telegram_cover(possible, cover_file)
@@ -188,7 +192,6 @@ async def download_track(url: str, output_dir: str = "/tmp") -> dict:
                     pass
                 break
 
-    # Запись ID3 тегов
     try:
         try:
             audio = EasyID3(mp3_path)
@@ -210,8 +213,8 @@ async def download_track(url: str, output_dir: str = "/tmp") -> dict:
                 data=img_data
             ))
             id3.save()
-    except Exception as e:
-        print(f"ID3 tags error: {e}")
+    except Exception:
+        pass
 
     return {
         'file_path': mp3_path,
