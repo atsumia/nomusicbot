@@ -46,11 +46,10 @@ def cyrillic_to_latin(text: str) -> str:
     return "".join([char_map.get(ch, ch) for ch in t]).strip()
 
 def get_search_queries(raw_query: str) -> list:
-    """Генерирует умный список вариантов для поиска"""
     q = raw_query.strip().lower()
     variants = [raw_query.strip()]
 
-    # Разбивка частых слитных слов
+    # Разбивка слитных слов
     spaced = re.sub(r'(френдли)(таг)', r'\1 \2', q)
     spaced = re.sub(r'(friendly)(thug)', r'\1 \2', spaced)
     if spaced not in variants:
@@ -141,21 +140,6 @@ def format_ym_track(track):
         'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
     }
 
-async def fetch_popular_for_artist(client, artist_id: int, limit: int = 15):
-    try:
-        artist_obj = (await client.artists([artist_id]))[0]
-        if artist_obj.popular_tracks:
-            return [format_ym_track(t) for t in artist_obj.popular_tracks[:limit]]
-    except Exception:
-        pass
-    try:
-        tr_page = await client.artists_tracks(artist_id, page=0, page_size=limit)
-        if tr_page and tr_page.tracks:
-            return [format_ym_track(t) for t in tr_page.tracks[:limit]]
-    except Exception:
-        pass
-    return []
-
 # --- Поиск по Яндекс Музыке ---
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
@@ -166,32 +150,22 @@ async def search_yandex(query: str, limit: int = 15):
 
     for q in queries:
         try:
-            # Ищем через общий поиск (он идеально сопоставляет кириллицу)
+            # 1. Сначала пробуем получить треки напрямую
             sr = await client.search(text=q, type_='all', page=0)
             if not sr:
                 continue
 
-            # 1. Проверяем блок 'best' (если Яндекс однозначно определил артиста)
-            if sr.best and sr.best.type == 'artist':
-                pop_tracks = await fetch_popular_for_artist(client, sr.best.result.id, limit)
-                if pop_tracks:
-                    return pop_tracks
-
-            # 2. Если в результатах есть артисты
-            if sr.artists and sr.artists.results:
-                first_artist = sr.artists.results[0]
-                # Если в запросе 1-2 слова, скорее всего искали именно исполнителя
-                if len(q.split()) <= 2:
-                    pop_tracks = await fetch_popular_for_artist(client, first_artist.id, limit)
-                    if pop_tracks:
-                        return pop_tracks
-
-            # 3. Если искали конкретный трек
+            # Если Яндекс выдал блок треков — они уже отсортированы по релевантности и популярности!
             if sr.tracks and sr.tracks.results:
                 return [format_ym_track(t) for t in sr.tracks.results[:limit]]
 
+            # Если треков нет в общем поиске, пробуем точечный поиск по track
+            tr_sr = await client.search(text=q, type_='track', page=0)
+            if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
+                return [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
+
         except Exception as e:
-            print(f"Yandex search error for '{q}': {e}")
+            print(f"YM search error for '{q}': {e}")
 
     return []
 
@@ -199,7 +173,10 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     client = await get_ym_client()
     os.makedirs(output_dir, exist_ok=True)
     
-    track = (await client.tracks([track_id]))[0]
+    tracks = await client.tracks([track_id])
+    if not tracks:
+        raise Exception("Трек не найден в Яндекс Музыке")
+    track = tracks[0]
     artists = ", ".join([a.name for a in track.artists if a.name])
     title = track.title
     duration = int(track.duration_ms / 1000) if track.duration_ms else 0
@@ -252,7 +229,7 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         'duration': duration
     }
 
-# --- SoundCloud (для ремиксов) ---
+# --- SoundCloud ---
 def search_sc_sync(query: str, limit: int = 15):
     queries = get_search_queries(query)
     search_opts = {
@@ -412,8 +389,8 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
         ym_results = await search_yandex(query, limit=limit)
         if ym_results:
             return ym_results
-        # Если в официальном режиме ничего не нашлось, НЕ падаем на SoundCloud с мусором:
-        return []
+
+    # Фоллбэк на SoundCloud
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, search_sc_sync, query, limit)
 
