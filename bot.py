@@ -16,7 +16,8 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-SEARCH_CACHE = {}
+# Сессии поиска: { user_id: { "results": [...], "urls": { short_id: url } } }
+USER_SESSIONS = {}
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
@@ -26,6 +27,41 @@ async def start_handler(message: types.Message):
         "• Или просто напиши **название** — я найду варианты для скачивания.",
         parse_mode="Markdown"
     )
+
+def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
+    session = USER_SESSIONS.get(user_id, {})
+    results = session.get("results", [])
+    
+    items_per_page = 5
+    total_pages = max(1, (len(results) + items_per_page - 1) // items_per_page)
+    page = max(0, min(page, total_pages - 1))
+    
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    current_items = results[start_idx:end_idx]
+
+    buttons = []
+    for idx, item in enumerate(current_items, start=start_idx + 1):
+        short_id = f"{user_id}_{item['id']}"[:50]
+        session.setdefault("urls", {})[short_id] = item['url']
+        
+        btn_text = f"{idx}. {item['uploader']} - {item['title']}"
+        if len(btn_text) > 42:
+            btn_text = btn_text[:39] + "..."
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl:{short_id}")])
+
+    # Пагинация (Назад / Страница / Вперёд)
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page:{page - 1}"))
+    
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="noop"))
+    
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"page:{page + 1}"))
+
+    buttons.append(nav_row)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Message):
     try:
@@ -70,31 +106,40 @@ async def handle_search(message: types.Message):
     status_msg = await message.answer("🔎 Ищу варианты...")
     
     try:
-        results = await search_tracks(query, limit=5)
+        results = await search_tracks(query, limit=15)
         if not results:
             await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос.")
             return
 
-        buttons = []
-        for idx, item in enumerate(results, start=1):
-            short_id = f"{message.from_user.id}_{idx}_{item['id']}"[:60]
-            SEARCH_CACHE[short_id] = item['url']
-            
-            title_btn = f"{idx}. {item['uploader']} - {item['title']}"
-            if len(title_btn) > 40:
-                title_btn = title_btn[:37] + "..."
-            
-            buttons.append([InlineKeyboardButton(text=title_btn, callback_data=f"dl:{short_id}")])
+        USER_SESSIONS[message.from_user.id] = {
+            "results": results,
+            "urls": {}
+        }
 
-        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        await status_msg.edit_text("Выбери нужный трек из списка:", reply_markup=kb)
+        kb = build_search_keyboard(message.from_user.id, page=0)
+        await status_msg.edit_text("Выбери трек из списка:", reply_markup=kb)
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
+
+@dp.callback_query(F.data.startswith("page:"))
+async def callback_pagination(callback: CallbackQuery):
+    page = int(callback.data.split("page:")[1])
+    kb = build_search_keyboard(callback.from_user.id, page=page)
+    await callback.message.edit_reply_markup(reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data == "noop")
+async def callback_noop(callback: CallbackQuery):
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
     short_id = callback.data.split("dl:")[1]
-    url = SEARCH_CACHE.get(short_id)
+    user_id = callback.from_user.id
+    
+    url = None
+    if user_id in USER_SESSIONS:
+        url = USER_SESSIONS[user_id].get("urls", {}).get(short_id)
 
     await callback.answer()
     if not url:
@@ -117,7 +162,6 @@ async def start_dummy_web_server():
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print(f"Health-check сервер запущен на порту {port}")
 
 async def main():
     await start_dummy_web_server()
