@@ -1,131 +1,128 @@
 import os
+import re
+import aiohttp
 import asyncio
-from aiohttp import web
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
-from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from dotenv import load_dotenv
-from downloader import download_track, search_tracks
+import yt_dlp
+from mutagen.easyid3 import EasyID3
+from mutagen.id3 import ID3, APIC
+from shazamio import Shazam
 
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+shazam = Shazam()
 
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не задан!")
+def clean_title(title: str) -> str:
+    trash_patterns = [
+        r'\[.*?\]',
+        r'\(.*?official.*?\)',
+        r'\(.*?audio.*?\)',
+        r'\(.*?prod\..*?\)',
+        r'\(.*?bass boosted.*?\)',
+        r't\.me/\S+',
+        r'vk\.com/\S+'
+    ]
+    for pattern in trash_patterns:
+        title = re.sub(pattern, '', title, flags=re.IGNORECASE)
+    return title.strip()
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+def search_tracks_sync(query: str, limit: int = 5):
+    search_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': 'in_playlist',
+    }
+    with yt_dlp.YoutubeDL(search_opts) as ydl:
+        res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
+        entries = res.get('entries', [])
+        results = []
+        for entry in entries:
+            results.append({
+                'id': entry.get('id'),
+                'title': entry.get('title', 'Без названия'),
+                'uploader': entry.get('uploader', 'Неизвестный автор'),
+                'url': entry.get('url') or entry.get('webpage_url'),
+                'duration': entry.get('duration') or 0
+            })
+        return results
 
-# Временное хранилище найденных ссылок для кнопок
-SEARCH_CACHE = {}
+async def search_tracks(query: str, limit: int = 5):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, search_tracks_sync, query, limit)
 
-@dp.message(CommandStart())
-async def start_handler(message: types.Message):
-    await message.answer(
-        "👋 **NoMusic**\n\n"
-        "• Отправь **ссылку** на трек\n"
-        "• Или просто напиши **название** — я найду варианты для скачивания.",
-        parse_mode="Markdown"
-    )
+async def download_track(url: str, output_dir: str = "/tmp") -> dict:
+    os.makedirs(output_dir, exist_ok=True)
+    temp_template = os.path.join(output_dir, '%(id)s.%(ext)s')
 
-async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Message):
-    try:
-        await status_msg.edit_text("⏳ Обрабатываю аудиозапись...")
-        track = await download_track(url)
-        file_path = track['file_path']
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': temp_template,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '320',
+        }],
+        'quiet': True,
+        'no_warnings': True,
+    }
 
-        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        if file_size_mb > 49.5:
-            await status_msg.edit_text("❌ Размер файла превышает лимит Telegram (50 МБ).")
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return
+    loop = asyncio.get_event_loop()
 
-        await status_msg.edit_text("🚀 Отправляю файл...")
-        audio = FSInputFile(
-            path=file_path,
-            filename=f"{track['artist']} - {track['title']}.mp3"
-        )
-        await bot.send_audio(
-            chat_id=chat_id,
-            audio=audio,
-            performer=track['artist'],
-            title=track['title'],
-            duration=track['duration']
-        )
-        await status_msg.delete()
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except Exception as e:
-        await status_msg.edit_text(f"⚠️ Ошибка загрузки: {str(e)}")
+    def run_ydl():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(filename)
+            mp3_path = f"{base}.mp3"
+            return mp3_path, info
 
-@dp.message(F.text.regexp(r'https?://[^\s]+'))
-async def handle_url(message: types.Message):
-    url = message.text.strip()
-    status_msg = await message.answer("⏳ Загрузка...")
-    await process_and_send_audio(message.chat.id, url, status_msg)
+    mp3_path, raw_info = await loop.run_in_executor(None, run_ydl)
 
-@dp.message(F.text)
-async def handle_search(message: types.Message):
-    query = message.text.strip()
-    status_msg = await message.answer("🔎 Ищу варианты...")
+    fallback_title = clean_title(raw_info.get('title', 'Track'))
+    fallback_artist = raw_info.get('uploader') or raw_info.get('channel', 'Artist')
     
+    final_title = fallback_title
+    final_artist = fallback_artist
+    cover_url = None
+
     try:
-        results = await search_tracks(query, limit=5)
-        if not results:
-            await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос.")
-            return
-
-        buttons = []
-        for idx, item in enumerate(results, start=1):
-            short_id = f"{message.from_user.id}_{idx}_{item['id']}"[:60]
-            SEARCH_CACHE[short_id] = item['url']
-            
-            title_btn = f"{idx}. {item['uploader']} - {item['title']}"
-            if len(title_btn) > 40:
-                title_btn = title_btn[:37] + "..."
-            
-            buttons.append([InlineKeyboardButton(text=title_btn, callback_data=f"dl:{short_id}")])
-
-        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-        await status_msg.edit_text("Выбери нужный трек из списка:", reply_markup=kb)
+        out = await shazam.recognize(mp3_path)
+        track_info = out.get('track')
+        if track_info:
+            final_title = track_info.get('title', fallback_title)
+            final_artist = track_info.get('subtitle', fallback_artist)
+            images = track_info.get('images', {})
+            cover_url = images.get('coverarthq') or images.get('coverart')
     except Exception as e:
-        await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
+        print(f"Shazam error: {e}")
 
-@dp.callback_query(F.data.startswith("dl:"))
-async def callback_download(callback: CallbackQuery):
-    short_id = callback.data.split("dl:")[1]
-    url = SEARCH_CACHE.get(short_id)
+    try:
+        try:
+            audio = EasyID3(mp3_path)
+        except Exception:
+            audio = EasyID3()
+        audio['title'] = final_title
+        audio['artist'] = final_artist
+        audio.save(mp3_path)
 
-    await callback.answer()
-    if not url:
-        await callback.message.edit_text("Срок действия выбора истёк. Повтори поиск.")
-        return
+        if cover_url:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(cover_url) as resp:
+                    if resp.status == 200:
+                        image_data = await resp.read()
+                        id3 = ID3(mp3_path)
+                        id3.add(APIC(
+                            encoding=3,
+                            mime='image/jpeg',
+                            type=3,
+                            desc='Cover',
+                            data=image_data
+                        ))
+                        id3.save()
+    except Exception as e:
+        print(f"ID3 tags error: {e}")
 
-    status_msg = await callback.message.edit_text("⏳ Загрузка выбранного трека...")
-    await process_and_send_audio(callback.message.chat.id, url, status_msg)
-
-# Простейший веб-сервер для прохождения проверки порта на Render
-async def handle_health_check(request):
-    return web.Response(text="NoMusic bot is running!")
-
-async def start_dummy_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle_health_check)
-    app.router.add_get('/health', handle_health_check)
-    
-    port = int(os.getenv("PORT", 8080))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"Health-check сервер запущен на порту {port}")
-
-async def main():
-    # Запускаем фоновый веб-сервер для Render
-    await start_dummy_web_server()
-    print("Бот запущен...")
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    return {
+        'file_path': mp3_path,
+        'title': final_title,
+        'artist': final_artist,
+        'duration': int(raw_info.get('duration', 0))
+    }
