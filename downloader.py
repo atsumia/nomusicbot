@@ -135,7 +135,7 @@ def format_ym_track(track):
         'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
     }
 
-# --- Обновленный поиск по Яндекс Музыке (с захватом фото для визуала) ---
+# --- ОБНОВЛЕНИЕ: Всегда отдаем словарь для генерации картинки ---
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
     if not client:
@@ -152,7 +152,7 @@ async def search_yandex(query: str, limit: int = 15):
             artist_name = q.title()
             cover_url = None
 
-            # Ищем фото артиста в блоке best или artists
+            # Ищем фото профиля артиста
             if sr.best and sr.best.type == 'artist':
                 artist_name = sr.best.result.name
                 if sr.best.result.cover and sr.best.result.cover.uri:
@@ -163,25 +163,36 @@ async def search_yandex(query: str, limit: int = 15):
                 if art.cover and art.cover.uri:
                     cover_url = f"https://{art.cover.uri.replace('%%', '400x400')}"
 
-            # Если треки найдены, упаковываем их вместе с фото!
+            # Если треки найдены
             if sr.tracks and sr.tracks.results:
                 tracks = [format_ym_track(t) for t in sr.tracks.results[:limit]]
                 
-                # Если нашли обложку, отдаем боту как "Профиль артиста" для генерации картинки
-                if cover_url:
-                    return {
-                        'type': 'artist',
-                        'artist_name': artist_name,
-                        'artist_photo': cover_url,
-                        'tracks': tracks
-                    }
-                # Если обложки нет, просто отдаем треки (fallback)
-                return tracks
+                # ФОЛЛБЭК: Если фото профиля нет, берем обложку самого популярного трека!
+                if not cover_url and sr.tracks.results[0].cover_uri:
+                    cover_url = f"https://{sr.tracks.results[0].cover_uri.replace('%%', '400x400')}"
+                    
+                # ВСЕГДА возвращаем dict, чтобы запустить visualizer.py
+                return {
+                    'type': 'artist',
+                    'artist_name': tracks[0]['uploader'] if tracks else artist_name,
+                    'artist_photo': cover_url,
+                    'tracks': tracks
+                }
 
-            # Если треков нет в общем поиске, пробуем точечный поиск
+            # Запасной прямой поиск по трекам
             tr_sr = await client.search(text=q, type_='track', page=0)
             if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
-                return [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
+                tracks = [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
+                cover_url = None
+                if tr_sr.tracks.results[0].cover_uri:
+                    cover_url = f"https://{tr_sr.tracks.results[0].cover_uri.replace('%%', '400x400')}"
+                
+                return {
+                    'type': 'artist',
+                    'artist_name': tracks[0]['uploader'] if tracks else artist_name,
+                    'artist_photo': cover_url,
+                    'tracks': tracks
+                }
 
         except Exception as e:
             print(f"YM search error for '{q}': {e}")
