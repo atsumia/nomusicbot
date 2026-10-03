@@ -25,37 +25,50 @@ async def get_ym_client():
             print(f"Yandex Music init error: {e}")
     return ym_client
 
-def cyrillic_to_latin(text: str) -> str:
-    phonetic_rules = [
-        (r'дж', 'j'),
-        (r'таг', 'thug'),
-        (r'френдли', 'friendly'),
-        (r'скрип', 'scrip'),
-        (r'клауд', 'cloud'),
-        (r'октобер', 'october'),
-        (r'щ', 'shch'),
-        (r'ш', 'sh'),
-        (r'ч', 'ch'),
-        (r'ц', 'ts'),
-        (r'кс', 'x'),
-        (r'ю', 'yu'),
-        (r'я', 'ya'),
-        (r'ж', 'zh'),
-        (r'х', 'kh'),
-        (r'ай', 'i'),
-        (r'ей', 'ey')
-    ]
-    t = text.lower()
-    for cyr, lat in phonetic_rules:
-        t = re.sub(cyr, lat, t)
+def expand_queries(text: str) -> list:
+    """
+    Генерирует все возможные варианты запроса:
+    'френдлитаг' -> ['френдлитаг', 'френдли таг', 'friendly thug', 'friendlythug']
+    """
+    variants = [text.strip()]
+    t = text.lower().strip()
+    
+    # Разделение частых слитных слов
+    spaced = re.sub(r'(френдли)(таг)', r'\1 \2', t)
+    spaced = re.sub(r'(friendly)(thug)', r'\1 \2', spaced)
+    if spaced != t:
+        variants.append(spaced)
 
-    char_map = {
-        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
-        'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
-        'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f',
-        'ы': 'y', 'э': 'e', 'ъ': '', 'ь': ''
-    }
-    return "".join([char_map.get(ch, ch) for ch in t]).strip()
+    # Транслитерация
+    phonetic_rules = [
+        (r'дж', 'j'), (r'таг', 'thug'), (r'френдли', 'friendly'),
+        (r'скрип', 'scrip'), (r'клауд', 'cloud'), (r'октобер', 'october'),
+        (r'щ', 'shch'), (r'ш', 'sh'), (r'ч', 'ch'), (r'ц', 'ts'),
+        (r'кс', 'x'), (r'ю', 'yu'), (r'я', 'ya'), (r'ж', 'zh'),
+        (r'х', 'kh'), (r'ай', 'i'), (r'ей', 'ey')
+    ]
+    for orig in list(variants):
+        curr = orig
+        for cyr, lat in phonetic_rules:
+            curr = re.sub(cyr, lat, curr)
+        char_map = {
+            'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
+            'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
+            'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f',
+            'ы': 'y', 'э': 'e', 'ъ': '', 'ь': ''
+        }
+        lat_text = "".join([char_map.get(ch, ch) for ch in curr]).strip()
+        if lat_text not in variants:
+            variants.append(lat_text)
+            
+    # Убираем дубли
+    seen = set()
+    final_variants = []
+    for v in variants:
+        if v.lower() not in seen:
+            seen.add(v.lower())
+            final_variants.append(v)
+    return final_variants
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
     tag_detected = None
@@ -73,16 +86,9 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
 
     cleaned = raw_title
     trash = [
-        r'\[.*?\]',
-        r'\(.*?official.*?\)',
-        r'\(.*?audio.*?\)',
-        r'\(.*?prod\..*?\)',
-        r'\(.*?slowed.*?\)',
-        r'\(.*?sped up.*?\)',
-        r'\(.*?speed up.*?\)',
-        r'\(.*?reverb.*?\)',
-        r't\.me/\S+',
-        r'vk\.com/\S+'
+        r'\[.*?\]', r'\(.*?official.*?\)', r'\(.*?audio.*?\)',
+        r'\(.*?prod\..*?\)', r'\(.*?slowed.*?\)', r'\(.*?sped up.*?\)',
+        r'\(.*?speed up.*?\)', r'\(.*?reverb.*?\)', r't\.me/\S+', r'vk\.com/\S+'
     ]
     for p in trash:
         cleaned = re.sub(p, '', cleaned, flags=re.IGNORECASE)
@@ -127,7 +133,6 @@ def prepare_telegram_cover(raw_img_path: str, output_path: str):
     except Exception:
         return None
 
-# --- Поиск по Яндекс Музыке с поддержкой топа артистов ---
 def format_ym_track(track):
     artists = ", ".join([a.name for a in track.artists if a.name])
     return {
@@ -139,59 +144,46 @@ def format_ym_track(track):
         'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
     }
 
+# --- Поиск по Яндекс Музыке ---
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
     if not client:
         return []
 
-    queries_to_try = [query]
-    if re.search(r'[а-яА-ЯёЁ]', query):
-        queries_to_try.append(cyrillic_to_latin(query))
+    variants = expand_queries(query)
 
-    for q in queries_to_try:
+    for q in variants:
         try:
-            # Ищем по всем категориям (type_='all')
-            sr = await client.search(text=q, type_='all', page=0)
-            if not sr:
-                continue
-
-            # 1. Если найден артист в качестве главного результата
-            artist_target = None
-            if sr.best and sr.best.type == 'artist':
-                artist_target = sr.best.result
-            elif sr.artists and sr.artists.results:
-                top_artist = sr.artists.results[0]
-                q_clean = q.lower().replace(' ', '')
-                a_name = top_artist.name.lower().replace(' ', '')
-                if q_clean in a_name or a_name in q_clean:
-                    artist_target = top_artist
-
-            # Если пользователь искал артиста — забираем его хиты по убыванию популярности
-            if artist_target:
-                tracks = []
+            # 1. Сначала пробуем найти именно артиста
+            artist_sr = await client.search(text=q, type_='artist', page=0)
+            if artist_sr and artist_sr.artists and artist_sr.artists.results:
+                artist = artist_sr.artists.results[0]
+                
+                # Забираем хиты артиста
+                popular = []
                 try:
-                    tr_page = await client.artists_tracks(artist_target.id, page=0, page_size=limit)
-                    if tr_page and tr_page.tracks:
-                        tracks = tr_page.tracks
+                    full_info = (await client.artists([artist.id]))[0]
+                    popular = full_info.popular_tracks or []
                 except Exception:
                     pass
-
-                if not tracks:
+                
+                if not popular:
                     try:
-                        full_artist = (await client.artists([artist_target.id]))[0]
-                        tracks = full_artist.popular_tracks or []
+                        tr_page = await client.artists_tracks(artist.id, page=0, page_size=limit)
+                        popular = tr_page.tracks if tr_page else []
                     except Exception:
                         pass
+                
+                if popular:
+                    return [format_ym_track(t) for t in popular[:limit]]
 
-                if tracks:
-                    return [format_ym_track(t) for t in tracks[:limit]]
-
-            # 2. Если искали конкретный трек
-            if sr.tracks and sr.tracks.results:
-                return [format_ym_track(t) for t in sr.tracks.results[:limit]]
+            # 2. Если артист не подошел — ищем треки
+            track_sr = await client.search(text=q, type_='track', page=0)
+            if track_sr and track_sr.tracks and track_sr.tracks.results:
+                return [format_ym_track(t) for t in track_sr.tracks.results[:limit]]
 
         except Exception as e:
-            print(f"YM search error for '{q}': {e}")
+            print(f"YM search failed for '{q}': {e}")
 
     return []
 
@@ -252,26 +244,24 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         'duration': duration
     }
 
-# --- SoundCloud (фоллбэк и режим ремиксов) ---
-def search_sc_single_query(query: str, limit: int = 15):
+# --- SoundCloud (для ремиксов) ---
+def search_sc_sync(query: str, limit: int = 15):
+    variants = expand_queries(query)
     search_opts = {
         'format': 'bestaudio/best',
         'quiet': True,
         'no_warnings': True,
         'extract_flat': 'in_playlist',
     }
+    
+    entries = []
     with yt_dlp.YoutubeDL(search_opts) as ydl:
-        try:
-            res = ydl.extract_info(f"scsearch{limit}:{query.strip()}", download=False)
-            return res.get('entries', []) or []
-        except Exception:
-            return []
-
-def search_sc_sync(query: str, limit: int = 15):
-    entries = search_sc_single_query(query, limit=limit)
-    if re.search(r'[а-яА-ЯёЁ]', query):
-        lat_q = cyrillic_to_latin(query)
-        entries += search_sc_single_query(lat_q, limit=limit)
+        for q in variants[:2]:
+            try:
+                res = ydl.extract_info(f"scsearch{limit}:{q}", download=False)
+                entries += res.get('entries', []) or []
+            except Exception:
+                pass
 
     results = []
     seen_ids = set()
