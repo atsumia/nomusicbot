@@ -7,6 +7,7 @@ from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButto
 from dotenv import load_dotenv
 
 # Подключаем наши модули
+import database
 from downloader import download_track, search_tracks
 from visualizer import generate_apple_card
 
@@ -21,19 +22,140 @@ dp = Dispatcher()
 
 USER_SESSIONS = {}
 
+# --- Генераторы инлайн-клавиатур меню ---
+
+def get_main_menu(user_id):
+    user = database.get_user(user_id)
+    mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
+    
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search")],
+        [InlineKeyboardButton(text="👤 Мой кабинет", callback_data="menu:profile")],
+        [InlineKeyboardButton(text=f"🎧 Режим: {mode_text}", callback_data="menu:toggle_mode")]
+    ])
+
+def get_profile_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❤️ Избранное", callback_data="menu:favorites"),
+         InlineKeyboardButton(text="📜 История", callback_data="menu:history")],
+        [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
+    ])
+
+# --- Обработчики стартового меню ---
+
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
+    # Регистрируем пользователя в БД
+    username = message.from_user.username or message.from_user.first_name
+    database.get_user(message.from_user.id, username)
+    
     await message.answer(
-        "👋 **NoMusic**\n\n"
-        "• Отправь **ссылку** на трек\n"
-        "• Или отправь **название** — по умолчанию ищу официальные релизы в высоком качестве.",
+        "👋 **Добро пожаловать в NoMusic!**\n\n"
+        "Я помогу тебе найти и скачать любые треки в высоком качестве.\n"
+        "Выбери действие в меню ниже:",
+        reply_markup=get_main_menu(message.from_user.id),
         parse_mode="Markdown"
     )
+
+@dp.callback_query(F.data == "menu:main")
+async def show_main_menu(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "👋 **Главное меню NoMusic**\n\nВыбери действие:",
+        reply_markup=get_main_menu(callback.from_user.id),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "menu:search")
+async def menu_search(callback: CallbackQuery):
+    await callback.message.answer("📝 Отправь мне название трека или ссылку для поиска!")
+    await callback.answer()
+
+@dp.callback_query(F.data == "menu:toggle_mode")
+async def menu_toggle_mode(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    user = database.get_user(user_id)
+    new_mode = "remix" if user['search_mode'] == "official" else "official"
+    
+    database.set_mode(user_id, new_mode)
+    await callback.message.edit_reply_markup(reply_markup=get_main_menu(user_id))
+    
+    mode_name = "Официальные релизы" if new_mode == "official" else "SoundCloud"
+    await callback.answer(f"✅ Режим изменен на: {mode_name}", show_alert=True)
+
+@dp.callback_query(F.data == "menu:profile")
+async def show_profile(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    username = callback.from_user.username or callback.from_user.first_name
+    user = database.get_user(user_id, username)
+    
+    mode_name = "🏛 Официальные релизы" if user['search_mode'] == "official" else "🎧 Ремиксы (SoundCloud)"
+    
+    text = (
+        f"👤 **Кабинет пользователя {username}**\n\n"
+        f"⬇️ **Скачано треков:** {user['download_count']}\n"
+        f"🔎 **Предпочитаемый поиск:** {mode_name}\n\n"
+        f"_Здесь ты можешь посмотреть историю загрузок и сохраненные треки._"
+    )
+    
+    await callback.message.edit_text(text, reply_markup=get_profile_menu(), parse_mode="Markdown")
+    await callback.answer()
+
+@dp.callback_query(F.data == "menu:history")
+async def show_history(callback: CallbackQuery):
+    records = database.get_history(callback.from_user.id)
+    if not records:
+        await callback.answer("Твоя история пока пуста 🥲", show_alert=True)
+        return
+    
+    buttons = []
+    for db_id, track_id, title, artist, url in records:
+        btn_text = f"{artist} - {title}"[:40]
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_db:history:{db_id}")])
+        
+    buttons.append([InlineKeyboardButton(text="🔙 Назад в кабинет", callback_data="menu:profile")])
+    await callback.message.edit_text("📜 **Последние 10 скачанных треков:**\n_Нажми на любой трек, чтобы скачать его снова_", 
+                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
+    await callback.answer()
+
+@dp.callback_query(F.data == "menu:favorites")
+async def show_favorites(callback: CallbackQuery):
+    records = database.get_favorites(callback.from_user.id)
+    if not records:
+        await callback.answer("У тебя пока нет избранных треков ❤️", show_alert=True)
+        return
+    
+    buttons = []
+    for db_id, track_id, title, artist, url in records:
+        btn_text = f"❤️ {artist} - {title}"[:40]
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_db:favorites:{db_id}")])
+        
+    buttons.append([InlineKeyboardButton(text="🔙 Назад в кабинет", callback_data="menu:profile")])
+    await callback.message.edit_text("❤️ **Твое избранное:**\n_Нажми на трек для скачивания_", 
+                                     reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
+    await callback.answer()
+
+# --- Кнопка "В избранное" под скачанным треком ---
+@dp.callback_query(F.data.startswith("fav:"))
+async def toggle_fav_callback(callback: CallbackQuery):
+    track_id = callback.data.split("fav:")[1]
+    user_id = callback.fromuser.id if hasattr(callback, "fromuser") else callback.from_user.id
+    
+    is_now_fav = database.toggle_favorite(user_id, track_id)
+    btn_text = "❤️️ В избранном" if is_now_fav else "🤍 В избранное"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=btn_text, callback_data=f"fav:{track_id}")
+    ]])
+    
+    await callback.message.edit_reply_markup(reply_markup=kb)
+    await callback.answer("Избранное обновлено!")
+
+# --- Логика Поиска и Клавиатур ---
 
 def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     session = USER_SESSIONS.get(user_id, {})
     results = session.get("results", [])
-    mode = session.get("mode", "official")
     
     items_per_page = 5
     total_pages = max(1, (len(results) + items_per_page - 1) // items_per_page)
@@ -44,10 +166,10 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     current_items = results[start_idx:end_idx]
 
     buttons = []
-    
     for idx, item in enumerate(current_items, start=start_idx + 1):
         short_id = f"{user_id}_{item['id']}"[:50]
-        session.setdefault("urls", {})[short_id] = item['url']
+        # Сохраняем весь объект трека для быстрого доступа
+        session.setdefault("items", {})[short_id] = item 
         
         btn_text = f"{idx}. {item['uploader']} - {item['title']}"
         if len(btn_text) > 42:
@@ -57,23 +179,14 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"page:{page - 1}"))
-    
     nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
-    
     if page < total_pages - 1:
         nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page:{page + 1}"))
-
     buttons.append(nav_row)
-
-    if mode == "official":
-        mode_btn = InlineKeyboardButton(text="🎧 Ремиксы (SoundCloud)", callback_data="toggle_mode:remix")
-    else:
-        mode_btn = InlineKeyboardButton(text="🏛 Официальные релизы", callback_data="toggle_mode:official")
-    buttons.append([mode_btn])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Message):
+async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message):
     file_path = None
     thumb_path = None
     try:
@@ -87,13 +200,19 @@ async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Messa
             await status_msg.edit_text("❌ Размер файла превышает лимит Telegram (50 МБ).")
             return
 
+        # Добавляем в историю и счетчик в БД
+        database.add_download(user_id, track_id, track['title'], track['artist'], url)
+
         await status_msg.edit_text("🚀 Отправляю файл...")
-        audio = FSInputFile(
-            path=file_path,
-            filename=f"{track['artist']} - {track['title']}.mp3"
-        )
-        
+        audio = FSInputFile(path=file_path, filename=f"{track['artist']} - {track['title']}.mp3")
         thumbnail = FSInputFile(thumb_path) if thumb_path and os.path.exists(thumb_path) else None
+
+        # Проверяем, в избранном ли трек
+        is_fav = database.is_favorite(user_id, track_id)
+        fav_text = "❤️ В избранном" if is_fav else "🤍 В избранное"
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")
+        ]])
 
         await bot.send_audio(
             chat_id=chat_id,
@@ -101,7 +220,8 @@ async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Messa
             performer=track['artist'],
             title=track['title'],
             duration=track['duration'],
-            thumbnail=thumbnail
+            thumbnail=thumbnail,
+            reply_markup=kb # Кнопка избранного прямо под треком!
         )
         await status_msg.delete()
     except Exception as e:
@@ -116,59 +236,53 @@ async def process_and_send_audio(chat_id: int, url: str, status_msg: types.Messa
 async def handle_url(message: types.Message):
     url = message.text.strip()
     status_msg = await message.answer("⏳ Загрузка ссылки...")
-    await process_and_send_audio(message.chat.id, url, status_msg)
+    await process_and_send_audio(message.chat.id, message.from_user.id, "link_track", url, status_msg)
 
 @dp.message(F.text)
-async def handle_search(message: types.Message, mode: str = "official"):
+async def handle_search(message: types.Message):
     query = message.text.strip()
-    status_msg = await message.answer("🔎 Ищу варианты...")
+    user_id = message.from_user.id
     
+    # Берем режим поиска из базы данных
+    user = database.get_user(user_id, message.from_user.username or message.from_user.first_name)
+    mode = user['search_mode']
+    
+    status_msg = await message.answer("🔎 Ищу варианты...")
     try:
         results = await search_tracks(query, mode=mode, limit=15)
         if not results:
-            await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос или переключить режим.")
+            await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос.")
             return
 
-        # Разделяем логику: это профиль артиста (dict) или просто список треков (list)
         is_artist = isinstance(results, dict) and results.get('type') == 'artist'
         tracks_list = results['tracks'] if is_artist else results
 
-        USER_SESSIONS[message.from_user.id] = {
+        USER_SESSIONS[user_id] = {
             "query": query,
-            "mode": mode,
             "results": tracks_list,
-            "urls": {}
+            "items": {}
         }
 
-        kb = build_search_keyboard(message.from_user.id, page=0)
+        kb = build_search_keyboard(user_id, page=0)
         mode_title = "Официальные релизы" if mode == "official" else "Ремиксы (SoundCloud)"
 
         if is_artist:
             await status_msg.edit_text("🎨 Генерирую карточку артиста...")
             try:
-                # Генерируем картинку
                 image_path = await generate_apple_card(
                     artist_name=results['artist_name'],
                     tracks=results['tracks'],
                     photo_url=results.get('artist_photo')
                 )
                 photo = FSInputFile(image_path)
-                
-                # Отправляем фото и удаляем сообщение "Генерирую..."
                 await message.answer_photo(
-                    photo=photo,
-                    caption=f"🎧 Результаты: **{mode_title}**",
-                    reply_markup=kb,
-                    parse_mode="Markdown"
+                    photo=photo, caption=f"🎧 Результаты: **{mode_title}**",
+                    reply_markup=kb, parse_mode="Markdown"
                 )
                 await status_msg.delete()
-                
-                # Чистим темповый файл
                 if os.path.exists(image_path):
                     os.remove(image_path)
-            except Exception as e:
-                print(f"Ошибка генерации картинки: {e}")
-                # Фолбэк на текст, если генерация упала
+            except Exception:
                 await status_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
         else:
             await status_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
@@ -176,69 +290,10 @@ async def handle_search(message: types.Message, mode: str = "official"):
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
 
-@dp.callback_query(F.data.startswith("toggle_mode:"))
-async def callback_toggle_mode(callback: CallbackQuery):
-    new_mode = callback.data.split("toggle_mode:")[1]
-    user_id = callback.from_user.id
-    session = USER_SESSIONS.get(user_id)
-    
-    if not session or not session.get("query"):
-        await callback.answer("Сессия истекла. Отправь запрос заново.", show_alert=True)
-        return
-
-    query = session["query"]
-    await callback.answer("🔄 Переключаю режим...")
-    
-    # Удаляем старое сообщение (так как оно может быть фото или текстом) и создаем новое
-    loading_msg = await callback.message.answer("⏳ Поиск...")
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-    
-    results = await search_tracks(query, mode=new_mode, limit=15)
-    if not results:
-        await loading_msg.edit_text("Ничего не найдено в этом режиме.")
-        return
-
-    is_artist = isinstance(results, dict) and results.get('type') == 'artist'
-    tracks_list = results['tracks'] if is_artist else results
-
-    session["mode"] = new_mode
-    session["results"] = tracks_list
-    session["urls"] = {}
-
-    kb = build_search_keyboard(user_id, page=0)
-    mode_title = "Официальные релизы" if new_mode == "official" else "Ремиксы (SoundCloud)"
-    
-    if is_artist:
-        await loading_msg.edit_text("🎨 Генерирую карточку артиста...")
-        try:
-            image_path = await generate_apple_card(
-                artist_name=results['artist_name'],
-                tracks=results['tracks'],
-                photo_url=results.get('artist_photo')
-            )
-            photo = FSInputFile(image_path)
-            await callback.message.answer_photo(
-                photo=photo,
-                caption=f"🎧 Результаты: **{mode_title}**",
-                reply_markup=kb,
-                parse_mode="Markdown"
-            )
-            await loading_msg.delete()
-            if os.path.exists(image_path):
-                os.remove(image_path)
-        except Exception as e:
-            await loading_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
-    else:
-        await loading_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
-
 @dp.callback_query(F.data.startswith("page:"))
 async def callback_pagination(callback: CallbackQuery):
     page = int(callback.data.split("page:")[1])
     kb = build_search_keyboard(callback.from_user.id, page=page)
-    # Метод edit_reply_markup корректно работает и с текстовыми сообщениями, и с фото!
     await callback.message.edit_reply_markup(reply_markup=kb)
     await callback.answer()
 
@@ -246,23 +301,41 @@ async def callback_pagination(callback: CallbackQuery):
 async def callback_noop(callback: CallbackQuery):
     await callback.answer()
 
+# Скачивание из стандартного поиска
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
     short_id = callback.data.split("dl:")[1]
     user_id = callback.from_user.id
     
-    url = None
-    if user_id in USER_SESSIONS:
-        url = USER_SESSIONS[user_id].get("urls", {}).get(short_id)
-
+    item = USER_SESSIONS.get(user_id, {}).get("items", {}).get(short_id)
     await callback.answer()
-    if not url:
+    
+    if not item:
         await callback.message.answer("Срок действия выбора истёк. Повтори поиск.")
         return
 
-    # Отправляем НОВОЕ сообщение со статусом, чтобы не трогать карточку артиста
     status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
-    await process_and_send_audio(callback.message.chat.id, url, status_msg)
+    await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
+
+# Скачивание прямо из Истории или Избранного
+@dp.callback_query(F.data.startswith("dl_db:"))
+async def callback_dl_db(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    table = parts[1] # history или favorites
+    db_id = parts[2]
+    
+    record = database.get_track_by_db_id(table, db_id)
+    await callback.answer()
+    
+    if not record:
+        await callback.message.answer("Ошибка: трек не найден в базе.")
+        return
+        
+    url, title, artist, track_id = record
+    status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
+    await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
+
+# --- WEB сервер и запуск ---
 
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
@@ -279,6 +352,7 @@ async def start_dummy_web_server():
     await site.start()
 
 async def main():
+    database.init_db() # Инициализация БД при запуске
     await start_dummy_web_server()
     print("Бот запущен...")
     await dp.start_polling(bot)
