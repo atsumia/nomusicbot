@@ -13,19 +13,21 @@ APPLE_TEXT_DARK = (29, 29, 31, 255)
 APPLE_TEXT_GRAY = (134, 134, 139, 255)
 APPLE_CORAL = (250, 45, 72, 255)
 
-# ИСПРАВЛЕНИЕ: Обновленные прямые ссылки на статичные шрифты
-FONT_BOLD_URL = "https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-Bold.ttf"
-FONT_REG_URL = "https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-Regular.ttf"
+# ИСПРАВЛЕНИЕ 1: Шрифт Roboto (100% поддержка кириллицы)
+FONT_BOLD_URL = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Bold.ttf"
+FONT_REG_URL = "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf"
 
-# Сохраняем строго во временную директорию (разрешено на любых хостингах)
-FONT_BOLD_PATH = "/tmp/Montserrat-Bold.ttf"
-FONT_REG_PATH = "/tmp/Montserrat-Regular.ttf"
+FONT_BOLD_PATH = "/tmp/Roboto-Bold.ttf"
+FONT_REG_PATH = "/tmp/Roboto-Regular.ttf"
+
+# ИСПРАВЛЕНИЕ 2: Заголовок браузера для обхода блокировки фото от Яндекса
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
 async def download_file(url, filename):
     if not os.path.exists(filename):
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
+                async with session.get(url, headers=HEADERS) as resp:
                     if resp.status == 200:
                         data = await resp.read()
                         with open(filename, 'wb') as f:
@@ -59,7 +61,6 @@ def ms_to_min_sec(ms):
     return f"{minutes}:{seconds:02d}"
 
 async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = None, output_path: str = None):
-    # Уникальный ID для каждого запроса, чтобы не было конфликтов
     uid = str(uuid.uuid4())
     if not output_path:
         output_path = f"/tmp/artist_card_{uid}.png"
@@ -70,7 +71,6 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
     draw = ImageDraw.Draw(img)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
-    # Безопасная загрузка шрифтов
     try:
         font_title = ImageFont.truetype(FONT_BOLD_PATH, 52)
         font_sub = ImageFont.truetype(FONT_BOLD_PATH, 18)
@@ -79,7 +79,7 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
     except Exception:
         font_title = font_sub = font_track = font_time = ImageFont.load_default()
 
-    # --- 1. ЛЕВАЯ ЧАСТЬ: ФОТО АРТИСТА ---
+    # --- ЛЕВАЯ ЧАСТЬ: ФОТО АРТИСТА ---
     photo_box = [40, 40, 390, 460]
     photo_radius = 24
     
@@ -91,7 +91,8 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
     if photo_url:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(photo_url) as resp:
+                # Отправляем запрос с заголовками, чтобы Яндекс отдал фото
+                async with session.get(photo_url, headers=HEADERS) as resp:
                     if resp.status == 200:
                         raw_data = await resp.read()
                         with open(photo_raw_path, "wb") as f:
@@ -131,7 +132,7 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
     else:
         draw.text((150, 230), "ARTIST", fill=APPLE_TEXT_GRAY, font=font_title)
 
-    # --- 2. ПРАВАЯ ЧАСТЬ: ЗАГОЛОВКИ И ТРЕКИ ---
+    # --- ПРАВАЯ ЧАСТЬ: ЗАГОЛОВКИ И ТРЕКИ ---
     text_x = 440
     
     draw.text((text_x, 45), "ГЛАВНЫЕ ТРЕКИ", fill=APPLE_CORAL, font=font_sub)
@@ -155,7 +156,6 @@ async def generate_apple_card(artist_name: str, tracks: list, photo_url: str = N
             title = title[:25] + "..."
         draw.text((text_x + 60, y + 10), title, fill=APPLE_TEXT_DARK, font=font_track)
         
-        # ИСПРАВЛЕНИЕ: Универсальная поддержка Яндекс (мс) и SoundCloud (сек)
         ms = t.get('duration_ms') or (t.get('duration', 0) * 1000)
         dur = ms_to_min_sec(ms)
         
