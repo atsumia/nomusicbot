@@ -25,12 +25,48 @@ async def get_ym_client():
             print(f"Yandex Music init error: {e}")
     return ym_client
 
+def cyrillic_to_latin(text: str) -> str:
+    """
+    Фонетическая транслитерация кириллицы в латиницу для музыкальных запросов.
+    Обрабатывает сложные буквосочетания (дж, тс, кс, я, ю, ш, щ, ч).
+    """
+    phonetic_rules = [
+        (r'дж', 'j'),
+        (r'таг', 'thug'),
+        (r'френдли', 'friendly'),
+        (r'скрип', 'scrip'),
+        (r'клауд', 'cloud'),
+        (r'октобер', 'october'),
+        (r'щ', 'shch'),
+        (r'ш', 'sh'),
+        (r'ч', 'ch'),
+        (r'ц', 'ts'),
+        (r'кс', 'x'),
+        (r'ю', 'yu'),
+        (r'я', 'ya'),
+        (r'ж', 'zh'),
+        (r'х', 'kh'),
+        (r'ай', 'i'),
+        (r'ей', 'ey')
+    ]
+    
+    t = text.lower()
+    for cyr, lat in phonetic_rules:
+        t = re.sub(cyr, lat, t)
+
+    char_map = {
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
+        'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
+        'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f',
+        'ы': 'y', 'э': 'e', 'ъ': '', 'ь': ''
+    }
+    
+    res = []
+    for ch in t:
+        res.append(char_map.get(ch, ch))
+    return "".join(res).strip()
+
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
-    """
-    Разбирает строку из SoundCloud: отделяет исполнителя от трека
-    и форматирует модификацию (slowed/sped up) с учетом регистра названия.
-    """
-    # 1. Определяем, есть ли модификация в треке
     tag_detected = None
     tag_patterns = [
         (r'\b(slowed\s*\+\s*reverb|slowed\s*and\s*reverb)\b', 'slowed + reverb'),
@@ -44,7 +80,6 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
             tag_detected = label
             break
 
-    # 2. Очищаем название от мусорных скобок и ссылок
     cleaned = raw_title
     trash = [
         r'\[.*?\]',
@@ -61,7 +96,6 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
     for p in trash:
         cleaned = re.sub(p, '', cleaned, flags=re.IGNORECASE)
 
-    # 3. Разделяем "Артист - Название"
     parts = re.split(r'\s*[-–—]\s*', cleaned, maxsplit=1)
     if len(parts) == 2 and parts[0].strip() and parts[1].strip():
         base_artist = parts[0].strip()
@@ -70,20 +104,16 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
         base_artist = uploader.strip()
         base_title = cleaned.strip()
 
-    # 4. Проверяем регистр первой буквы чистого названия
-    # Ищем первую букву алфавита в названии
     first_letter_match = re.search(r'[a-zA-Zа-яА-ЯёЁ]', base_title)
     is_lower = False
     if first_letter_match:
         is_lower = first_letter_match.group(0).islower()
 
-    # Формируем постфикс с учетом регистра
     tag_suffix = ""
     if tag_detected:
         if is_lower:
-            formatted_tag = tag_detected.lower()  # например: (slowed)
+            formatted_tag = tag_detected.lower()
         else:
-            # Делаем Capitalize для каждого слова: (Slowed) или (Slowed + Reverb)
             formatted_tag = " + ".join([w.strip().capitalize() for w in tag_detected.split('+')])
         tag_suffix = f" ({formatted_tag})"
 
@@ -108,30 +138,50 @@ def prepare_telegram_cover(raw_img_path: str, output_path: str):
         return None
 
 # --- Поиск и загрузка из Яндекс Музыки ---
-async def search_yandex(query: str, limit: int = 15):
-    client = await get_ym_client()
-    if not client:
-        return []
-
+async def search_yandex_single(client, text: str, limit: int = 15):
     try:
-        search_result = await client.search(text=query, type_='track', page=0)
+        search_result = await client.search(text=text, type_='track', page=0)
         if not search_result or not search_result.tracks:
             return []
-
-        results = []
+        res = []
         for track in search_result.tracks.results[:limit]:
             artists = ", ".join([a.name for a in track.artists if a.name])
-            results.append({
+            res.append({
                 'id': f"ym_{track.id}",
+                'raw_id': str(track.id),
                 'title': track.title,
                 'uploader': artists or "Артист",
                 'url': f"ym://{track.id}",
                 'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
             })
-        return results
-    except Exception as e:
-        print(f"Yandex search error: {e}")
+        return res
+    except Exception:
         return []
+
+async def search_yandex(query: str, limit: int = 15):
+    client = await get_ym_client()
+    if not client:
+        return []
+
+    # 1. Поиск по прямому запросу
+    tasks = [search_yandex_single(client, query, limit=limit)]
+
+    # 2. Если в запросе есть кириллица — добавляем транслитерированный вариант
+    if re.search(r'[а-яА-ЯёЁ]', query):
+        lat_query = cyrillic_to_latin(query)
+        tasks.append(search_yandex_single(client, lat_query, limit=limit))
+
+    all_results = await asyncio.gather(*tasks)
+
+    # Дедупликация треков по ID
+    seen_ids = set()
+    combined = []
+    for batch in all_results:
+        for t in batch:
+            if t['raw_id'] not in seen_ids:
+                seen_ids.add(t['raw_id'])
+                combined.append(t)
+    return combined[:limit]
 
 async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict:
     client = await get_ym_client()
@@ -191,7 +241,7 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     }
 
 # --- Поиск и загрузка из SoundCloud ---
-def search_sc_sync(query: str, limit: int = 15):
+def search_sc_single_query(query: str, limit: int = 15):
     clean_q = query.strip()
     search_opts = {
         'format': 'bestaudio/best',
@@ -202,31 +252,45 @@ def search_sc_sync(query: str, limit: int = 15):
     with yt_dlp.YoutubeDL(search_opts) as ydl:
         try:
             res = ydl.extract_info(f"scsearch{limit}:{clean_q}", download=False)
-            entries = res.get('entries', []) or []
+            return res.get('entries', []) or []
         except Exception:
-            entries = []
+            return []
 
-        results = []
-        for entry in entries:
-            if not entry:
-                continue
-            url = entry.get('url') or entry.get('webpage_url')
-            if not url:
-                continue
-            
-            raw_title = entry.get('title', 'Без названия')
-            raw_uploader = entry.get('uploader') or 'Неизвестный автор'
-            
-            parsed_artist, parsed_title = parse_sc_title_and_artist(raw_title, raw_uploader)
+def search_sc_sync(query: str, limit: int = 15):
+    entries = search_sc_single_query(query, limit=limit)
+    
+    # Если на кириллице ничего не нашлось или мало треков — ищем транслит
+    if re.search(r'[а-яА-ЯёЁ]', query):
+        lat_q = cyrillic_to_latin(query)
+        entries += search_sc_single_query(lat_q, limit=limit)
 
-            results.append({
-                'id': f"sc_{entry.get('id')}",
-                'title': parsed_title,
-                'uploader': parsed_artist,
-                'url': url,
-                'duration': entry.get('duration') or 0
-            })
-        return results
+    results = []
+    seen_ids = set()
+    for entry in entries:
+        if not entry:
+            continue
+        eid = str(entry.get('id'))
+        if eid in seen_ids:
+            continue
+        seen_ids.add(eid)
+
+        url = entry.get('url') or entry.get('webpage_url')
+        if not url:
+            continue
+        
+        raw_title = entry.get('title', 'Без названия')
+        raw_uploader = entry.get('uploader') or 'Неизвестный автор'
+        
+        parsed_artist, parsed_title = parse_sc_title_and_artist(raw_title, raw_uploader)
+
+        results.append({
+            'id': f"sc_{eid}",
+            'title': parsed_title,
+            'uploader': parsed_artist,
+            'url': url,
+            'duration': entry.get('duration') or 0
+        })
+    return results[:limit]
 
 async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     os.makedirs(output_dir, exist_ok=True)
@@ -263,7 +327,6 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     final_artist, final_title = parse_sc_title_and_artist(raw_title, raw_uploader)
     cover_url = raw_info.get('thumbnail')
 
-    # Для оригинальных треков пробуем подтянуть метаданные через Shazam
     if '(slowed' not in final_title.lower() and '(sped' not in final_title.lower():
         try:
             out = await shazam.recognize(mp3_path)
