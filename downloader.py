@@ -10,7 +10,6 @@ from shazamio import Shazam
 shazam = Shazam()
 
 def clean_title(title: str) -> str:
-    """Очистка от мусорных приписок, если Shazam не найдет трек."""
     trash_patterns = [
         r'\[.*?\]',
         r'\(.*?official.*?\)',
@@ -24,11 +23,32 @@ def clean_title(title: str) -> str:
         title = re.sub(pattern, '', title, flags=re.IGNORECASE)
     return title.strip()
 
+def search_tracks_sync(query: str, limit: int = 5):
+    search_opts = {
+        'format': 'bestaudio/best',
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': 'in_playlist',
+    }
+    with yt_dlp.YoutubeDL(search_opts) as ydl:
+        res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
+        entries = res.get('entries', [])
+        results = []
+        for entry in entries:
+            results.append({
+                'id': entry.get('id'),
+                'title': entry.get('title', 'Без названия'),
+                'uploader': entry.get('uploader', 'Неизвестный автор'),
+                'url': entry.get('url') or entry.get('webpage_url'),
+                'duration': entry.get('duration') or 0
+            })
+        return results
+
+async def search_tracks(query: str, limit: int = 5):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, search_tracks_sync, query, limit)
+
 async def download_track(url: str, output_dir: str = "/tmp") -> dict:
-    """
-    Скачивает аудиопоток через yt-dlp, извлекает MP3, 
-    распознает через Shazam и вшивает официальные теги.
-    """
     os.makedirs(output_dir, exist_ok=True)
     temp_template = os.path.join(output_dir, '%(id)s.%(ext)s')
 
@@ -46,40 +66,34 @@ async def download_track(url: str, output_dir: str = "/tmp") -> dict:
 
     loop = asyncio.get_event_loop()
 
-    # 1. Скачиваем аудио через yt-dlp
     def run_ydl():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
-            # Файл после FFmpegExtractAudio всегда имеет расширение .mp3
             base, _ = os.path.splitext(filename)
             mp3_path = f"{base}.mp3"
             return mp3_path, info
 
     mp3_path, raw_info = await loop.run_in_executor(None, run_ydl)
 
-    # 2. Исходные данные (на случай, если Shazam не распознает)
-    fallback_title = clean_title(raw_info.get('title', 'Unknown Track'))
-    fallback_artist = raw_info.get('uploader') or raw_info.get('channel', 'Unknown Artist')
+    fallback_title = clean_title(raw_info.get('title', 'Track'))
+    fallback_artist = raw_info.get('uploader') or raw_info.get('channel', 'Artist')
     
     final_title = fallback_title
     final_artist = fallback_artist
     cover_url = None
 
-    # 3. Аудиоотпечаток через Shazam
     try:
         out = await shazam.recognize(mp3_path)
         track_info = out.get('track')
         if track_info:
             final_title = track_info.get('title', fallback_title)
             final_artist = track_info.get('subtitle', fallback_artist)
-            # Извлекаем качественную обложку Apple Music/Shazam
             images = track_info.get('images', {})
             cover_url = images.get('coverarthq') or images.get('coverart')
     except Exception as e:
-        print(f"Shazam recognition error: {e}")
+        print(f"Shazam error: {e}")
 
-    # 4. Вшиваем метаданные (ID3-теги) в файл
     try:
         try:
             audio = EasyID3(mp3_path)
@@ -89,7 +103,6 @@ async def download_track(url: str, output_dir: str = "/tmp") -> dict:
         audio['artist'] = final_artist
         audio.save(mp3_path)
 
-        # 5. Если есть обложка — вшиваем изображение
         if cover_url:
             async with aiohttp.ClientSession() as session:
                 async with session.get(cover_url) as resp:
@@ -99,13 +112,13 @@ async def download_track(url: str, output_dir: str = "/tmp") -> dict:
                         id3.add(APIC(
                             encoding=3,
                             mime='image/jpeg',
-                            type=3,  # Front cover
+                            type=3,
                             desc='Cover',
                             data=image_data
                         ))
                         id3.save()
     except Exception as e:
-        print(f"Tag writing error: {e}")
+        print(f"ID3 tags error: {e}")
 
     return {
         'file_path': mp3_path,
