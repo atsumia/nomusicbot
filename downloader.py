@@ -12,7 +12,6 @@ from yandex_music import ClientAsync
 shazam = Shazam()
 YANDEX_TOKEN = os.getenv("YANDEX_MUSIC_TOKEN")
 
-# Инициализация клиента Яндекс Музыки
 ym_client = None
 
 async def get_ym_client():
@@ -26,18 +25,70 @@ async def get_ym_client():
             print(f"Yandex Music init error: {e}")
     return ym_client
 
-def clean_title(title: str) -> str:
-    trash_patterns = [
+def parse_sc_title_and_artist(raw_title: str, uploader: str):
+    """
+    Разбирает строку из SoundCloud: отделяет исполнителя от трека
+    и форматирует модификацию (slowed/sped up) с учетом регистра названия.
+    """
+    # 1. Определяем, есть ли модификация в треке
+    tag_detected = None
+    tag_patterns = [
+        (r'\b(slowed\s*\+\s*reverb|slowed\s*and\s*reverb)\b', 'slowed + reverb'),
+        (r'\b(slowed)\b', 'slowed'),
+        (r'\b(sped\s*up|speed\s*up)\b', 'sped up'),
+        (r'\b(remix)\b', 'remix'),
+        (r'\b(reverb)\b', 'reverb')
+    ]
+    for pattern, label in tag_patterns:
+        if re.search(pattern, raw_title, flags=re.IGNORECASE):
+            tag_detected = label
+            break
+
+    # 2. Очищаем название от мусорных скобок и ссылок
+    cleaned = raw_title
+    trash = [
         r'\[.*?\]',
         r'\(.*?official.*?\)',
         r'\(.*?audio.*?\)',
         r'\(.*?prod\..*?\)',
+        r'\(.*?slowed.*?\)',
+        r'\(.*?sped up.*?\)',
+        r'\(.*?speed up.*?\)',
+        r'\(.*?reverb.*?\)',
         r't\.me/\S+',
         r'vk\.com/\S+'
     ]
-    for pattern in trash_patterns:
-        title = re.sub(pattern, '', title, flags=re.IGNORECASE)
-    return title.strip()
+    for p in trash:
+        cleaned = re.sub(p, '', cleaned, flags=re.IGNORECASE)
+
+    # 3. Разделяем "Артист - Название"
+    parts = re.split(r'\s*[-–—]\s*', cleaned, maxsplit=1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        base_artist = parts[0].strip()
+        base_title = parts[1].strip()
+    else:
+        base_artist = uploader.strip()
+        base_title = cleaned.strip()
+
+    # 4. Проверяем регистр первой буквы чистого названия
+    # Ищем первую букву алфавита в названии
+    first_letter_match = re.search(r'[a-zA-Zа-яА-ЯёЁ]', base_title)
+    is_lower = False
+    if first_letter_match:
+        is_lower = first_letter_match.group(0).islower()
+
+    # Формируем постфикс с учетом регистра
+    tag_suffix = ""
+    if tag_detected:
+        if is_lower:
+            formatted_tag = tag_detected.lower()  # например: (slowed)
+        else:
+            # Делаем Capitalize для каждого слова: (Slowed) или (Slowed + Reverb)
+            formatted_tag = " + ".join([w.strip().capitalize() for w in tag_detected.split('+')])
+        tag_suffix = f" ({formatted_tag})"
+
+    final_title = f"{base_title}{tag_suffix}"
+    return base_artist, final_title
 
 def prepare_telegram_cover(raw_img_path: str, output_path: str):
     try:
@@ -95,10 +146,8 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     cover_raw_path = os.path.join(output_dir, f"ym_{track_id}_raw.jpg")
     cover_thumb_path = os.path.join(output_dir, f"ym_{track_id}_thumb.jpg")
 
-    # Скачивание аудио в 320 kbps
     await track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
 
-    # Скачивание официальной обложки
     thumb_path = None
     if track.cover_uri:
         try:
@@ -109,7 +158,6 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         except Exception:
             pass
 
-    # Вшиваем теги ID3
     try:
         audio = EasyID3(mp3_path)
     except Exception:
@@ -142,7 +190,7 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         'duration': duration
     }
 
-# --- Поиск и загрузка из SoundCloud (для ремиксов) ---
+# --- Поиск и загрузка из SoundCloud ---
 def search_sc_sync(query: str, limit: int = 15):
     clean_q = query.strip()
     search_opts = {
@@ -165,10 +213,16 @@ def search_sc_sync(query: str, limit: int = 15):
             url = entry.get('url') or entry.get('webpage_url')
             if not url:
                 continue
+            
+            raw_title = entry.get('title', 'Без названия')
+            raw_uploader = entry.get('uploader') or 'Неизвестный автор'
+            
+            parsed_artist, parsed_title = parse_sc_title_and_artist(raw_title, raw_uploader)
+
             results.append({
                 'id': f"sc_{entry.get('id')}",
-                'title': entry.get('title', 'Без названия'),
-                'uploader': entry.get('uploader') or 'Артист',
+                'title': parsed_title,
+                'uploader': parsed_artist,
                 'url': url,
                 'duration': entry.get('duration') or 0
             })
@@ -203,11 +257,24 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
 
     mp3_path, base_path, raw_info = await loop.run_in_executor(None, run_ydl)
 
-    fallback_title = clean_title(raw_info.get('title', 'Track'))
-    fallback_artist = raw_info.get('uploader') or raw_info.get('channel', 'Artist')
-    final_title = fallback_title
-    final_artist = fallback_artist
+    raw_title = raw_info.get('title', 'Track')
+    raw_uploader = raw_info.get('uploader') or raw_info.get('channel', 'Artist')
+    
+    final_artist, final_title = parse_sc_title_and_artist(raw_title, raw_uploader)
     cover_url = raw_info.get('thumbnail')
+
+    # Для оригинальных треков пробуем подтянуть метаданные через Shazam
+    if '(slowed' not in final_title.lower() and '(sped' not in final_title.lower():
+        try:
+            out = await shazam.recognize(mp3_path)
+            track_info = out.get('track')
+            if track_info:
+                final_title = track_info.get('title', final_title)
+                final_artist = track_info.get('subtitle', final_artist)
+                images = track_info.get('images', {})
+                cover_url = images.get('coverarthq') or images.get('coverart') or cover_url
+        except Exception:
+            pass
 
     cover_file = f"{base_path}_thumb.jpg"
     thumb_path = None
@@ -226,6 +293,17 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
                             os.remove(raw_path)
         except Exception:
             pass
+
+    if not thumb_path:
+        for ext in ['.jpg', '.webp', '.png', '.jpeg']:
+            possible = f"{base_path}{ext}"
+            if os.path.exists(possible):
+                thumb_path = prepare_telegram_cover(possible, cover_file)
+                try:
+                    os.remove(possible)
+                except Exception:
+                    pass
+                break
 
     try:
         try:
@@ -259,13 +337,11 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'duration': int(raw_info.get('duration', 0))
     }
 
-# --- Главные интерфейсные функции ---
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     if mode == "official":
         ym_results = await search_yandex(query, limit=limit)
         if ym_results:
             return ym_results
-    # Если официальный режим не вернул результатов или выбран режим ремиксов
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, search_sc_sync, query, limit)
 
