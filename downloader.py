@@ -148,14 +148,19 @@ async def search_yandex(query: str, limit: int = 15):
             if not sr:
                 continue
 
+            is_artist_search = False
             artist_name = q.title()
             cover_url = None
 
+            # Если Яндекс решил, что лучший результат - это профиль артиста
             if sr.best and sr.best.type == 'artist':
+                is_artist_search = True
                 artist_name = sr.best.result.name
                 if sr.best.result.cover and sr.best.result.cover.uri:
                     cover_url = f"https://{sr.best.result.cover.uri.replace('%%', '400x400')}"
+            # Или если артист есть в топе выдачи
             elif sr.artists and sr.artists.results:
+                is_artist_search = True
                 art = sr.artists.results[0]
                 artist_name = art.name
                 if art.cover and art.cover.uri:
@@ -164,29 +169,24 @@ async def search_yandex(query: str, limit: int = 15):
             if sr.tracks and sr.tracks.results:
                 tracks = [format_ym_track(t) for t in sr.tracks.results[:limit]]
                 
-                if not cover_url and sr.tracks.results[0].cover_uri:
-                    cover_url = f"https://{sr.tracks.results[0].cover_uri.replace('%%', '400x400')}"
-                    
-                return {
-                    'type': 'artist',
-                    'artist_name': tracks[0]['uploader'] if tracks else artist_name,
-                    'artist_photo': cover_url,
-                    'tracks': tracks
-                }
+                # РАЗГРАНИЧЕНИЕ: Карточка рисуется ТОЛЬКО если искали артиста
+                if is_artist_search:
+                    if not cover_url and sr.tracks.results[0].cover_uri:
+                        cover_url = f"https://{sr.tracks.results[0].cover_uri.replace('%%', '400x400')}"
+                    return {
+                        'type': 'artist',
+                        'artist_name': artist_name,
+                        'artist_photo': cover_url,
+                        'tracks': tracks
+                    }
+                else:
+                    # Если искали конкретную песню - просто возвращаем список треков
+                    return tracks
 
+            # Запасной прямой поиск по трекам (всегда возвращает список, без карточки)
             tr_sr = await client.search(text=q, type_='track', page=0)
             if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
-                tracks = [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
-                cover_url = None
-                if tr_sr.tracks.results[0].cover_uri:
-                    cover_url = f"https://{tr_sr.tracks.results[0].cover_uri.replace('%%', '400x400')}"
-                
-                return {
-                    'type': 'artist',
-                    'artist_name': tracks[0]['uploader'] if tracks else artist_name,
-                    'artist_photo': cover_url,
-                    'tracks': tracks
-                }
+                return [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
 
         except Exception as e:
             print(f"YM search error for '{q}': {e}")
@@ -407,24 +407,15 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'duration': int(raw_info.get('duration', 0))
     }
 
-# ИСПРАВЛЕНИЕ: Теперь SoundCloud ТОЖЕ всегда отдает словарь, чтобы бот запустил генерацию картинки.
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     if mode == "official":
         ym_results = await search_yandex(query, limit=limit)
         if ym_results:
             return ym_results
 
+    # Поиск по SoundCloud всегда возвращает список треков (без карточки)
     loop = asyncio.get_event_loop()
-    sc_results = await loop.run_in_executor(None, search_sc_sync, query, limit)
-    
-    if sc_results:
-        return {
-            'type': 'artist',
-            'artist_name': sc_results[0]['uploader'],
-            'artist_photo': None,
-            'tracks': sc_results
-        }
-    return []
+    return await loop.run_in_executor(None, search_sc_sync, query, limit)
 
 async def download_track(url: str) -> dict:
     if url.startswith("ym://"):
