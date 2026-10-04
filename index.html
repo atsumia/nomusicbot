@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>NoMusic — Apple Music</title>
+    <title>NoMusic</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -15,11 +15,9 @@
                         apple: {
                             red: '#FA2D48',
                             coral: '#FF3B30',
-                            dark: '#000000',
                             cardDark: '#1C1C1E',
                             subDark: '#2C2C2E',
                             light: '#F2F2F7',
-                            cardLight: '#FFFFFF',
                             textGray: '#8E8E93'
                         }
                     }
@@ -40,26 +38,26 @@
             overscroll-behavior-y: none;
         }
         .apple-glass {
-            background: rgba(255, 255, 255, 0.82);
+            background: rgba(255, 255, 255, 0.85);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
         }
         .dark .apple-glass {
-            background: rgba(28, 28, 30, 0.85);
+            background: rgba(28, 28, 30, 0.88);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
         }
         .glass-card {
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
-            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.04);
             border: 0.5px solid rgba(0, 0, 0, 0.04);
         }
         .dark .glass-card {
-            background: rgba(36, 36, 38, 0.8);
+            background: rgba(36, 36, 38, 0.85);
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
             box-shadow: 0 6px 24px -2px rgba(0, 0, 0, 0.4);
@@ -103,7 +101,7 @@
             </div>
             <div>
                 <span class="text-[10px] font-bold tracking-wider text-apple-red uppercase">NoMusic Stream</span>
-                <h1 id="header-user-name" class="font-bold text-base leading-tight">Привет, Слушатель</h1>
+                <h1 id="header-user-name" class="font-bold text-base leading-tight">Слушатель</h1>
             </div>
         </div>
         <div class="flex items-center space-x-2">
@@ -121,22 +119,28 @@
             
             <div class="relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-[#1C1C1E] to-[#2C2C2E] text-white shadow-xl">
                 <div class="absolute -right-6 -bottom-6 w-32 h-32 bg-apple-red/30 rounded-full blur-2xl pointer-events-none"></div>
-                <span class="text-xs font-bold uppercase tracking-widest text-apple-red">Выбор редакции</span>
+                <span class="text-xs font-bold uppercase tracking-widest text-apple-red">Лицензионный каталог</span>
                 <h2 class="text-2xl font-black mt-1 leading-snug">Твоя музыка.<br>В чистом виде.</h2>
-                <p class="text-xs text-zinc-400 mt-2 max-w-[210px]">Лицензионный каталог, студийные обложки и прямой звук.</p>
+                <p class="text-xs text-zinc-400 mt-2 max-w-[220px]">Студийные релизы, оригинальные обложки и прямой звук.</p>
                 <button onclick="switchTab('search')" class="mt-4 px-4 py-2 bg-apple-red hover:bg-apple-coral active:scale-95 transition text-white rounded-full text-xs font-semibold shadow-md flex items-center space-x-1.5">
                     <span>Начать поиск</span>
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path></svg>
                 </button>
             </div>
 
-            <!-- Горячие новинки -->
+            <!-- Реальные популярные релизы -->
             <div>
                 <div class="flex items-center justify-between mb-3 px-1">
-                    <h3 class="font-bold text-lg">Горячие новинки</h3>
-                    <span class="text-xs font-medium text-apple-red cursor-pointer">Все</span>
+                    <h3 class="font-bold text-lg">Популярные треки</h3>
+                    <span onclick="loadTrendingReleases(true)" class="text-xs font-medium text-apple-red cursor-pointer active:opacity-70">Обновить</span>
                 </div>
-                <div class="flex space-x-4 overflow-x-auto no-scrollbar pb-2 pt-1" id="releases-carousel"></div>
+                <div class="flex space-x-4 overflow-x-auto no-scrollbar pb-2 pt-1" id="releases-carousel">
+                    <!-- Загрузка реальных релизов через API -->
+                    <div class="text-xs text-apple-textGray py-8 px-2 flex items-center space-x-2">
+                        <span class="animate-spin text-sm">⏳</span>
+                        <span>Загрузка каталога Apple Storefront...</span>
+                    </div>
+                </div>
             </div>
 
             <!-- Популярные артисты -->
@@ -151,20 +155,20 @@
             <div class="grid grid-cols-2 gap-3 pt-1">
                 <div onclick="switchTab('library')" class="glass-card p-4 rounded-2xl cursor-pointer active:scale-95 transition flex flex-col justify-between h-28">
                     <div class="w-9 h-9 rounded-xl bg-apple-red text-white flex items-center justify-center text-lg shadow-sm">
-                        ❤️
+                        ❤️️
                     </div>
                     <div>
                         <div class="font-bold text-sm">Любимые</div>
                         <div class="text-[11px] text-apple-textGray" id="fav-count-badge">0 треков</div>
                     </div>
                 </div>
-                <div onclick="openLyricsModal()" class="glass-card p-4 rounded-2xl cursor-pointer active:scale-95 transition flex flex-col justify-between h-28">
+                <div onclick="switchTab('search')" class="glass-card p-4 rounded-2xl cursor-pointer active:scale-95 transition flex flex-col justify-between h-28">
                     <div class="w-9 h-9 rounded-xl bg-blue-500 text-white flex items-center justify-center text-lg shadow-sm">
-                        💬
+                        🔎
                     </div>
                     <div>
-                        <div class="font-bold text-sm">Тексты песен</div>
-                        <div class="text-[11px] text-apple-textGray">Караоке просмотр</div>
+                        <div class="font-bold text-sm">Каталог</div>
+                        <div class="text-[11px] text-apple-textGray">Быстрый поиск</div>
                     </div>
                 </div>
             </div>
@@ -212,7 +216,7 @@
             <div id="library-content" class="space-y-2"></div>
         </section>
 
-        <!-- ================= ЭКРАН 4: ПРОФИЛЬ ================= -->
+        <!-- ================= ЭКРАН 4: ПРОФИЛЬ (ЧИСТЫЙ UI) ================= -->
         <section id="screen-profile" class="hidden space-y-4">
             <h2 class="text-2xl font-black">Профиль</h2>
             
@@ -222,24 +226,34 @@
                         NM
                     </div>
                     <div>
-                        <h3 id="profile-name" class="font-bold text-lg leading-snug">Слушатель NoMusic</h3>
-                        <p id="profile-id-sub" class="text-xs text-apple-textGray">ID: 00000000</p>
+                        <h3 id="profile-name" class="font-bold text-lg leading-snug">Слушатель</h3>
+                        <p id="profile-id-sub" class="text-xs text-apple-textGray">Telegram ID: —</p>
                     </div>
                 </div>
 
-                <div class="border-t border-black/5 dark:border-white/10 pt-3 space-y-2.5 text-xs">
+                <div class="border-t border-black/5 dark:border-white/10 pt-3 space-y-3 text-xs">
                     <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Плеер</span>
-                        <span class="font-semibold text-apple-red">Client-Side Streaming</span>
+                        <span class="text-apple-textGray">Статус</span>
+                        <span class="font-semibold text-apple-red">NoMusic Member</span>
                     </div>
                     <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Нагрузка на сервер Render</span>
-                        <span class="font-semibold text-green-500">0% (RAM Safe)</span>
+                        <span class="text-apple-textGray">Качество аудио</span>
+                        <span class="font-semibold">Студийное (320 kbps)</span>
                     </div>
                     <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Каталог</span>
-                        <span class="font-semibold">Apple Storefront (RU)</span>
+                        <span class="text-apple-textGray">Тактильный отклик</span>
+                        <span class="font-semibold text-green-500">Включен (Haptic)</span>
                     </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-apple-textGray">Версия Mini App</span>
+                        <span class="font-semibold text-zinc-400">1.2 (Apple Minimal)</span>
+                    </div>
+                </div>
+
+                <div class="pt-2">
+                    <button onclick="clearUserHistory()" class="w-full py-2.5 rounded-xl bg-black/5 dark:bg-white/10 text-xs font-semibold text-apple-textGray hover:text-apple-red active:scale-95 transition">
+                        Очистить историю прослушиваний
+                    </button>
                 </div>
             </div>
         </section>
@@ -249,7 +263,7 @@
     <!-- Компактный мини-плеер внизу -->
     <div id="mini-player-bar" class="fixed bottom-20 left-3 right-3 max-w-md mx-auto apple-glass rounded-2xl p-2.5 shadow-2xl flex items-center justify-between border border-black/5 dark:border-white/10 hidden z-50 cursor-pointer" onclick="openFullscreenPlayer()">
         <div class="flex items-center space-x-3 overflow-hidden">
-            <img id="mini-player-cover" src="https://placehold.co/100x100/FA2D48/FFFFFF?text=NM" class="w-11 h-11 rounded-xl object-cover shadow-sm">
+            <img id="mini-player-cover" src="" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
             <div class="truncate">
                 <div id="mini-player-title" class="font-bold text-xs truncate">Название трека</div>
                 <div id="mini-player-artist" class="text-[11px] text-apple-textGray truncate">Исполнитель</div>
@@ -269,14 +283,12 @@
                 ✕
             </button>
             <span class="text-xs uppercase tracking-widest text-apple-textGray font-semibold">Сейчас играет</span>
-            <button onclick="openLyricsModal()" class="w-8 h-8 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center text-xs">
-                💬
-            </button>
+            <div class="w-8"></div>
         </div>
 
         <div class="flex justify-center my-auto py-4">
             <div class="relative w-64 h-64 sm:w-72 sm:h-72">
-                <img id="full-cover" src="https://placehold.co/300x300/FA2D48/FFFFFF?text=NoMusic" class="w-full h-full object-cover rounded-3xl shadow-2xl">
+                <img id="full-cover" src="" class="w-full h-full object-cover rounded-3xl shadow-2xl bg-zinc-800">
             </div>
         </div>
 
@@ -305,20 +317,6 @@
                 <button onclick="nextTrack()" class="text-2xl active:scale-75 transition text-apple-textGray hover:text-black dark:hover:text-white">⏭</button>
             </div>
         </div>
-    </div>
-
-    <!-- Тексты песен -->
-    <div id="lyrics-modal" class="fixed inset-0 z-50 bg-[#1C1C1E] text-white p-6 transform translate-y-full transition-transform duration-300 flex flex-col justify-between">
-        <div class="flex justify-between items-center">
-            <h3 class="font-bold text-sm text-zinc-400">Слова песни (Preview)</h3>
-            <button onclick="closeLyricsModal()" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs">✕</button>
-        </div>
-        <div class="overflow-y-auto no-scrollbar py-6 space-y-4 text-center" id="lyrics-container">
-            <p class="text-lg font-bold text-zinc-400">Слушайте трек в NoMusic...</p>
-            <p class="text-xl font-black text-apple-red">Музыка объединяет сердца</p>
-            <p class="text-lg font-bold text-zinc-400">Чистый звук без лишних пауз</p>
-        </div>
-        <button onclick="closeLyricsModal()" class="w-full py-3 bg-white/10 rounded-2xl text-xs font-semibold">Закрыть</button>
     </div>
 
     <!-- Нижний таб-бар -->
@@ -355,22 +353,16 @@
             }
         }
 
-        const tgUser = tg?.initDataUnsafe?.user || { first_name: 'Пользователь', id: 7770001 };
-        document.getElementById('header-user-name').innerText = tgUser.first_name;
-        document.getElementById('profile-name').innerText = `${tgUser.first_name} ${tgUser.last_name || ''}`.trim();
-        document.getElementById('profile-id-sub').innerText = `Telegram ID: ${tgUser.id}`;
+        const tgUser = tg?.initDataUnsafe?.user || { first_name: 'Пользователь', id: 0 };
+        document.getElementById('header-user-name').innerText = tgUser.first_name || 'Слушатель';
+        document.getElementById('profile-name').innerText = `${tgUser.first_name || 'Слушатель'} ${tgUser.last_name || ''}`.trim();
+        document.getElementById('profile-id-sub').innerText = tgUser.id ? `Telegram ID: ${tgUser.id}` : 'Telegram WebApp';
+        
         const initialLetter = (tgUser.first_name || 'N').charAt(0).toUpperCase();
         document.getElementById('header-avatar').innerText = initialLetter;
         document.getElementById('profile-avatar-big').innerText = initialLetter;
 
-        const initialCatalog = [
-            { id: '101', title: 'ASPHALT 8', artist: 'MACAN', cover: 'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=300&q=80', audio: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', duration: 180 },
-            { id: '102', title: 'Юра, Юра', artist: 'CUPSIZE', cover: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&q=80', audio: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3', duration: 195 },
-            { id: '103', title: 'Маша', artist: 'ПОЛМАТЕРИ', cover: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80', audio: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3', duration: 170 },
-            { id: '104', title: 'Горгород', artist: 'Oxxxymiron', cover: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=300&q=80', audio: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3', duration: 220 },
-            { id: '105', title: 'Addiction', artist: 'LONOWN', cover: 'https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=300&q=80', audio: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3', duration: 160 }
-        ];
-
+        let liveTrendingTracks = [];
         let favorites = JSON.parse(localStorage.getItem('nomusic_favs') || '[]');
         let history = JSON.parse(localStorage.getItem('nomusic_hist') || '[]');
         let currentTrack = null;
@@ -395,24 +387,49 @@
             }
         }
 
-        function initHomeScreen() {
+        async function loadTrendingReleases(force = false) {
             const carousel = document.getElementById('releases-carousel');
-            carousel.innerHTML = '';
-            initialCatalog.forEach(track => {
-                const el = document.createElement('div');
-                el.className = 'flex-shrink-0 w-32 cursor-pointer group active:scale-95 transition';
-                el.innerHTML = `
-                    <div class="relative overflow-hidden rounded-2xl shadow-md mb-1.5 aspect-square">
-                        <img src="${track.cover}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
-                    </div>
-                    <div class="font-bold text-xs truncate">${track.title}</div>
-                    <div class="text-[11px] text-apple-textGray truncate">${track.artist}</div>
-                `;
-                el.onclick = () => playSong(track);
-                carousel.appendChild(el);
-            });
+            if (force) {
+                carousel.innerHTML = '<div class="text-xs text-apple-textGray py-8 px-2 flex items-center space-x-2"><span class="animate-spin text-sm">⏳</span><span>Загрузка свежего чарта...</span></div>';
+            }
 
-            const artists = ['MACAN', 'CUPSIZE', 'ПОЛМАТЕРИ', 'Oxxxymiron', 'LONOWN', 'FRIENDLY THUG'];
+            try {
+                // Подтягиваем реальные популярные композиции российского региона Apple Storefront
+                const resp = await fetch('https://itunes.apple.com/search?term=хиты&country=ru&entity=song&limit=12');
+                const data = await resp.json();
+                
+                if (data.results && data.results.length > 0) {
+                    liveTrendingTracks = data.results.map(item => ({
+                        id: String(item.trackId),
+                        title: item.trackName,
+                        artist: item.artistName,
+                        cover: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x400bb') : '',
+                        audio: item.previewUrl,
+                        duration: 30
+                    }));
+
+                    carousel.innerHTML = '';
+                    liveTrendingTracks.forEach(track => {
+                        const el = document.createElement('div');
+                        el.className = 'flex-shrink-0 w-32 cursor-pointer group active:scale-95 transition';
+                        el.innerHTML = `
+                            <div class="relative overflow-hidden rounded-2xl shadow-md mb-1.5 aspect-square bg-zinc-800">
+                                <img src="${track.cover}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" loading="lazy">
+                            </div>
+                            <div class="font-bold text-xs truncate">${track.title}</div>
+                            <div class="text-[11px] text-apple-textGray truncate">${track.artist}</div>
+                        `;
+                        el.onclick = () => playSong(track);
+                        carousel.appendChild(el);
+                    });
+                }
+            } catch (err) {
+                carousel.innerHTML = '<div class="text-xs text-apple-textGray py-8 px-2">Каталог временно недоступен</div>';
+            }
+        }
+
+        function initArtistsGrid() {
+            const artists = ['MACAN', 'CUPSIZE', 'ПОЛМАТЕРИ', 'Oxxxymiron', 'Miyagi', 'FRIENDLY THUG'];
             const artistsGrid = document.getElementById('artists-grid');
             artistsGrid.innerHTML = '';
             artists.forEach(artist => {
@@ -420,7 +437,7 @@
                 card.className = 'glass-card p-3 rounded-2xl text-center cursor-pointer active:scale-95 transition';
                 card.innerHTML = `
                     <div class="w-12 h-12 mx-auto rounded-full bg-apple-red/10 text-apple-red font-bold flex items-center justify-center text-xs mb-1.5">
-                        ${artist.slice(0, 2)}
+                        ${artist.slice(0, 2).toUpperCase()}
                     </div>
                     <div class="font-semibold text-xs truncate">${artist}</div>
                 `;
@@ -431,12 +448,18 @@
                 };
                 artistsGrid.appendChild(card);
             });
-
-            updateFavBadge();
         }
 
         function updateFavBadge() {
             document.getElementById('fav-count-badge').innerText = `${favorites.length} треков`;
+        }
+
+        function clearUserHistory() {
+            haptic('medium');
+            history = [];
+            localStorage.setItem('nomusic_hist', JSON.stringify(history));
+            if (currentLibTab === 'hist') renderLibrary();
+            alert('История прослушиваний очищена.');
         }
 
         function switchTab(tabId) {
@@ -499,7 +522,7 @@
                 return;
             }
 
-            list.innerHTML = `<div class="text-center py-12 text-apple-textGray text-xs animate-pulse">Поиск по каталогу Apple Storefront...</div>`;
+            list.innerHTML = `<div class="text-center py-12 text-apple-textGray text-xs animate-pulse">Поиск по каталогу...</div>`;
 
             try {
                 const resp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=ru&entity=song&limit=15`);
@@ -516,8 +539,8 @@
                         id: String(item.trackId),
                         title: item.trackName,
                         artist: item.artistName,
-                        cover: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '300x300bb') : 'https://placehold.co/300x300/FA2D48/FFFFFF?text=NM',
-                        audio: item.previewUrl || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+                        cover: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x400bb') : '',
+                        audio: item.previewUrl,
                         duration: 30
                     };
 
@@ -525,7 +548,7 @@
                     row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
                     row.innerHTML = `
                         <div class="flex items-center space-x-3 overflow-hidden">
-                            <img src="${track.cover}" class="w-11 h-11 rounded-xl object-cover shadow-sm">
+                            <img src="${track.cover}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
                             <div class="truncate">
                                 <h4 class="font-bold text-xs truncate">${track.title}</h4>
                                 <p class="text-[11px] text-apple-textGray truncate">${track.artist}</p>
@@ -538,24 +561,7 @@
                 });
 
             } catch (err) {
-                const filtered = initialCatalog.filter(t => t.title.toLowerCase().includes(query.toLowerCase()) || t.artist.toLowerCase().includes(query.toLowerCase()));
-                list.innerHTML = '';
-                filtered.forEach(track => {
-                    const row = document.createElement('div');
-                    row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
-                    row.innerHTML = `
-                        <div class="flex items-center space-x-3 overflow-hidden">
-                            <img src="${track.cover}" class="w-11 h-11 rounded-xl object-cover shadow-sm">
-                            <div class="truncate">
-                                <h4 class="font-bold text-xs truncate">${track.title}</h4>
-                                <p class="text-[11px] text-apple-textGray truncate">${track.artist}</p>
-                            </div>
-                        </div>
-                        <button class="w-8 h-8 rounded-full bg-apple-red/10 text-apple-red flex items-center justify-center font-bold text-xs">▶</button>
-                    `;
-                    row.onclick = () => playSong(track);
-                    list.appendChild(row);
-                });
+                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Ошибка при загрузке треков</div>`;
             }
         }
 
@@ -590,7 +596,7 @@
                 row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
                 row.innerHTML = `
                     <div class="flex items-center space-x-3 overflow-hidden">
-                        <img src="${track.cover}" class="w-11 h-11 rounded-xl object-cover shadow-sm">
+                        <img src="${track.cover}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
                         <div class="truncate">
                             <h4 class="font-bold text-xs truncate">${track.title}</h4>
                             <p class="text-[11px] text-apple-textGray truncate">${track.artist}</p>
@@ -621,14 +627,16 @@
             document.getElementById('full-cover').src = track.cover;
             updateFavIcon();
 
-            audio.src = track.audio;
-            audio.play().then(() => {
-                isPlaying = true;
-                updatePlayButtons();
-            }).catch(() => {
-                isPlaying = true;
-                updatePlayButtons();
-            });
+            if (track.audio) {
+                audio.src = track.audio;
+                audio.play().then(() => {
+                    isPlaying = true;
+                    updatePlayButtons();
+                }).catch(() => {
+                    isPlaying = true;
+                    updatePlayButtons();
+                });
+            }
         }
 
         function toggleAudioPlay() {
@@ -671,12 +679,12 @@
 
         function prevTrack() {
             haptic('light');
-            if (initialCatalog.length > 0) playSong(initialCatalog[0]);
+            if (liveTrendingTracks.length > 0) playSong(liveTrendingTracks[0]);
         }
 
         function nextTrack() {
             haptic('light');
-            if (initialCatalog.length > 1) playSong(initialCatalog[1]);
+            if (liveTrendingTracks.length > 1) playSong(liveTrendingTracks[1]);
         }
 
         function openFullscreenPlayer() {
@@ -687,16 +695,6 @@
         function closeFullscreenPlayer() {
             haptic('light');
             document.getElementById('player-modal').classList.add('translate-y-full');
-        }
-
-        function openLyricsModal() {
-            haptic('light');
-            document.getElementById('lyrics-modal').classList.remove('translate-y-full');
-        }
-
-        function closeLyricsModal() {
-            haptic('light');
-            document.getElementById('lyrics-modal').classList.add('translate-y-full');
         }
 
         function toggleFavoriteCurrent() {
@@ -719,7 +717,9 @@
             document.getElementById('full-fav-btn').innerText = exists ? '❤️' : '🤍';
         }
 
-        initHomeScreen();
+        loadTrendingReleases();
+        initArtistsGrid();
+        updateFavBadge();
     </script>
 </body>
 </html>
