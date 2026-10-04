@@ -26,7 +26,7 @@ async def get_ym_client():
             print(f"Yandex Music init error: {e}")
     return ym_client
 
-# Расширенная статическая карта для локального андеграунда и нишевых артистов
+# Статическая карта для самых популярных артистов
 ARTIST_ALIASES = {
     'макан': 'MACAN',
     'macan': 'MACAN',
@@ -236,6 +236,7 @@ def strict_text_filter(tracks: list, original_query: str, normalized_query: str)
         
     for t in tracks:
         track_text = f"{t.get('uploader', '')} {t.get('title', '')}".lower()
+        # Пропускаем, если хоть одно слово из оригинального ИЛИ нормализованного запроса есть в треке
         if any(word in track_text for word in check_words):
             filtered.append(t)
             
@@ -259,6 +260,7 @@ def rank_tracks_by_exact_match(tracks: list, original_query: str, normalized_que
         uploader_lower = t.get('uploader', '').lower()
         combined = f"{uploader_lower} {title_lower}"
         
+        # Полное совпадение всей фразы дает максимум очков
         if original_query.lower() in combined or normalized_query.lower() in combined:
             score += 200
             
@@ -271,12 +273,13 @@ def rank_tracks_by_exact_match(tracks: list, original_query: str, normalized_que
                 score += 5
                 match_count += 1
                 
-        # Бонус за то, что все слова запроса присутствуют в треке
+        # Если все слова из запроса присутствуют, даем мощный буст
         if match_count >= len(orig_words):
             score += 100
             
         return score
         
+    # Сортируем по убыванию очков
     return sorted(tracks, key=track_score, reverse=True)
 
 
@@ -292,6 +295,7 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
         if sr:
             artist_found = False
 
+            # 1. Приоритетный поиск официального профиля артиста
             if getattr(sr, 'artists', None) and getattr(sr.artists, 'results', None):
                 for artist in sr.artists.results:
                     if artist.name and artist.name.lower() == query.lower():
@@ -301,6 +305,7 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
                             artist_found = True
                         break 
 
+            # 2. Если точный профиль не найден, проверяем блок best
             if not artist_found and getattr(sr, 'best', None):
                 if getattr(sr.best, 'type', None) == 'artist':
                     art_id = sr.best.result.id
@@ -310,6 +315,7 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
                 elif getattr(sr.best, 'type', None) == 'track':
                     all_tracks.append(format_ym_track(sr.best.result))
 
+            # 3. Основная поисковая выдача
             if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
                 all_tracks.extend([format_ym_track(t) for t in sr.tracks.results])
 
@@ -473,6 +479,7 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
             'duration': entry.get('duration') or 0
         })
         
+    # Применяем фильтр к саундклауду ТОЖЕ, чтобы убрать спам вроде "hood trapppa"
     unique_tracks = deduplicate_tracks(results)
     query_to_check = original_query if original_query else query
     filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
@@ -499,12 +506,20 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     loop = asyncio.get_event_loop()
 
     def run_ydl():
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            base, _ = os.path.splitext(filename)
-            mp3_path = f"{base}.mp3"
-            return mp3_path, base, info
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                base, _ = os.path.splitext(filename)
+                mp3_path = f"{base}.mp3"
+                return mp3_path, base, info
+        except yt_dlp.utils.DownloadError as e:
+            # Изящный перехват ошибки защиты авторских прав (DRM)
+            if "DRM protected" in str(e) or "DRM" in str(e):
+                raise Exception("Трек защищен правообладателем (DRM SoundCloud Premium) и недоступен для скачивания 😔")
+            raise Exception("Ошибка загрузки из SoundCloud. Возможно, трек был удален.")
+        except Exception as e:
+            raise Exception(f"Внутренняя ошибка загрузки: {str(e)}")
 
     mp3_path, base_path, raw_info = await loop.run_in_executor(None, run_ydl)
 
@@ -599,27 +614,21 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     normalized_query = await resolve_dynamic_query(query)
     
-    # 1. Генерируем массив запросов (включая перестановку слов, если Яндекс тупит)
+    # 1. Формируем пул запросов для проверки
     queries_to_try = [normalized_query]
     
-    # Разворачиваем слова (addiction lonown -> lonown addiction)
-    words = normalized_query.split()
-    if len(words) > 1:
-        mid = len(words) // 2
-        reversed_norm = " ".join(words[mid:] + words[:mid])
-        if reversed_norm not in queries_to_try:
-            queries_to_try.append(reversed_norm)
-            
-    # Добавляем оригинальный запрос и его реверс, если нормализация его изменила
+    # Если нормализация сработала, добавим оригинальный запрос
     if query.strip().lower() != normalized_query.lower():
         if query.strip() not in queries_to_try:
             queries_to_try.append(query.strip())
-        orig_words = query.strip().split()
-        if len(orig_words) > 1:
-            mid = len(orig_words) // 2
-            reversed_orig = " ".join(orig_words[mid:] + orig_words[:mid])
-            if reversed_orig not in queries_to_try:
-                queries_to_try.append(reversed_orig)
+            
+    # REVERSE FALLBACK: Меняем слова местами, чтобы обмануть Яндекс ("addiction lonown" -> "lonown addiction")
+    orig_words = query.strip().split()
+    if len(orig_words) > 1:
+        mid = len(orig_words) // 2
+        reversed_orig = " ".join(orig_words[mid:] + orig_words[:mid])
+        if reversed_orig not in queries_to_try:
+            queries_to_try.append(reversed_orig)
 
     if mode == "official":
         pool = []
@@ -627,12 +636,11 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
             ym_results = await search_yandex(q, limit=limit, original_query=query)
             pool.extend(ym_results)
             
-            # Проверяем, нашли ли мы идеальное совпадение
+            # Если нашли точное совпадение, не делаем лишних запросов
             best_match_found = False
             check_words = set(re.findall(r'\b\w{2,}\b', query.lower()))
             for t in ym_results:
                 text = f"{t.get('uploader','')} {t.get('title','')}".lower()
-                # Если все слова есть в треке, можно больше не мучить Яндекс
                 if check_words and all(w in text for w in check_words):
                     best_match_found = True
                     break
@@ -645,10 +653,10 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
             ranked = rank_tracks_by_exact_match(unique_pool, query, normalized_query)
             return ranked[:limit]
 
-    # SoundCloud logic (используем те же перестановки)
+    # Поиск в SoundCloud с теми же мощными фильтрами и перестановками
     loop = asyncio.get_event_loop()
     pool = []
-    for q in queries_to_try[:2]: # Максимум 2 запроса, чтобы не было долго
+    for q in queries_to_try[:2]: 
         sc_results = await loop.run_in_executor(None, search_sc_sync, q, limit, query)
         pool.extend(sc_results)
         
