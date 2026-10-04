@@ -12,14 +12,13 @@ from aiogram.types import (
     KeyboardButton,
     BotCommand,
     InlineQuery,
-    InlineQueryResultArticle,
-    InlineQueryResultCachedAudio,
-    InputTextMessageContent
+    InlineQueryResultAudio,
+    InlineQueryResultCachedAudio
 )
 from dotenv import load_dotenv
 
 import database
-from downloader import download_track, search_tracks
+from downloader import download_track, search_tracks, get_direct_stream_url
 from visualizer import generate_apple_card
 
 load_dotenv()
@@ -75,33 +74,19 @@ def get_profile_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
     ])
 
-# --- Стартовый хэндлер с поддержкой Deep-Linking ---
+# --- Стартовый хэндлер ---
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
     username = message.from_user.username or message.from_user.first_name
     database.get_user(message.from_user.id, username)
     
-    # Обработка прямой ссылки из инлайна
-    args = message.text.split()[1:] if len(message.text.split()) > 1 else []
-    if args and args[0].startswith("dl_"):
-        raw_id = args[0].replace("dl_", "")
-        status_msg = await message.answer("⏳ Загружаю выбранный трек в качестве 320 kbps...")
-        await process_and_send_audio(
-            message.chat.id,
-            message.from_user.id,
-            f"ym_{raw_id}",
-            f"ym://{raw_id}",
-            status_msg
-        )
-        return
-
     reply_kb = get_bottom_reply_keyboard(message.from_user.id)
     inline_kb = get_main_menu(message.from_user.id)
     
     welcome_text = (
         "👋 <b>Привет! Это NoMusic.</b>\n\n"
-        "Сервис предназначен для поиска и загрузки аудиозаписей в качестве до <b>320 kbps</b>.\n\n"
+        "Сервис предназначен для поиска и загрузки аудиозаписей.\n\n"
         "<blockquote>💡 <i>Чтобы найти трек, просто отправь его название, имя артиста или ссылку на композицию.</i></blockquote>"
     )
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
@@ -330,7 +315,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             reply_markup=kb
         )
 
-        # Сохраняем Telegram file_id для работы мгновенного Inline плеера
+        # Сохраняем Telegram file_id для мгновенного инлайн-плеера
         tg_fid = sent_msg.audio.file_id if sent_msg.audio else None
         database.add_download(user_id, track_id, track['title'], track['artist'], url, tg_fid)
 
@@ -338,7 +323,6 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
     except Exception as e:
         await status_msg.edit_text(f"⚠️ Ошибка загрузки: {str(e)}")
     finally:
-        # Освобождаем память диска и ОЗУ немедленно
         if file_path and os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -519,7 +503,8 @@ async def callback_dl_db(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
-# --- БЫСТРЫЙ ИНЛАЙН РЕЖИМ (0% утечек памяти, ответ за ~200 мс) ---
+
+# --- ЧИСТЫЙ ИНЛАЙН РЕЖИМ (Только напрямую аудио, без ссылок) ---
 
 @dp.inline_query()
 async def inline_search_handler(inline_query: InlineQuery):
@@ -530,8 +515,11 @@ async def inline_search_handler(inline_query: InlineQuery):
         return
 
     try:
-        # Только быстрый поиск метаданных, никакой нагрузки на процессор и диск
-        results = await search_tracks(query, mode="official", limit=10)
+        user = database.get_user(inline_query.from_user.id)
+        mode = user['search_mode']
+        
+        # Получаем список треков (лимит 6, чтобы не было таймаута)
+        results = await search_tracks(query, mode=mode, limit=6)
         if not results:
             await inline_query.answer([], cache_time=5, is_personal=True)
             return
@@ -539,67 +527,64 @@ async def inline_search_handler(inline_query: InlineQuery):
         is_artist = isinstance(results, dict) and results.get('type') == 'artist'
         tracks_list = results['tracks'] if is_artist else results
 
-        bot_info = await bot.get_me()
-        bot_username = bot_info.username or "nomscbot"
+        valid_results = []
+        uncached_tasks = []
 
-        items = []
+        # Инлайн-кнопка под отправленным треком
+        inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🎧 Найти песню", switch_inline_query_current_chat="")
+        ]])
 
-        for idx, t in enumerate(tracks_list[:10]):
+        # 1. Формируем список кэшированных треков, остальное ставим в очередь на получение URL
+        for idx, t in enumerate(tracks_list[:6]):
             track_id = str(t['id'])
-            raw_id = str(t.get('raw_id', track_id.replace('ym_', '')))
-            track_title = t.get('title', 'Без названия')
-            artist_name = t.get('uploader', 'Артист')
-            duration = int(float(t.get('duration') or 0))
-            dur_str = format_duration(duration) if duration > 0 else ""
-
-            # 1. Если трек уже скачивался — отдаём нативный Telegram плеер
             cached_fid = database.get_cached_file_id(track_id)
+
             if cached_fid:
-                items.append(
+                valid_results.append(
                     InlineQueryResultCachedAudio(
                         id=f"c_{idx}_{track_id}"[:50],
                         audio_file_id=cached_fid,
-                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                            InlineKeyboardButton(
-                                text="🎧 Нажми, чтобы найти песню",
-                                switch_inline_query_current_chat=""
-                            )
-                        ]])
+                        reply_markup=inline_kb
                     )
                 )
-                continue
+            else:
+                # Ограничиваем до 3 новых треков одновременно, чтобы уложиться в лимит Telegram (2 сек)
+                if len(uncached_tasks) < 3:
+                    uncached_tasks.append((idx, t))
 
-            # 2. Если трека ещё нет в базе — отдаём мгновенную карточку с диплинком
-            download_deep_link = f"https://t.me/{bot_username}?start=dl_{raw_id}"
-            
-            card_kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⚡️ Скачать в качестве 320 kbps", url=download_deep_link)],
-                [InlineKeyboardButton(text="🎧 Найти другую песню", switch_inline_query_current_chat="")]
-            ])
+        # 2. Асинхронно добываем потоки с жестким таймаутом
+        async def resolve_audio(idx, t):
+            try:
+                stream_url = await asyncio.wait_for(get_direct_stream_url(t['url']), timeout=1.5)
+                if stream_url:
+                    return InlineQueryResultAudio(
+                        id=f"str_{idx}_{t['id']}"[:50],
+                        audio_url=stream_url,
+                        title=t.get('title', 'Без названия'),
+                        performer=t.get('uploader', 'Артист'),
+                        audio_duration=int(float(t.get('duration') or 0)),
+                        reply_markup=inline_kb
+                    )
+            except asyncio.TimeoutError:
+                pass
+            except Exception as e:
+                print(f"Inline stream error: {e}")
+            return None
 
-            items.append(
-                InlineQueryResultArticle(
-                    id=f"art_{idx}_{track_id}"[:50],
-                    title=f"{artist_name} — {track_title}",
-                    description=f"⏱ {dur_str} • Нажмите для отправки" if dur_str else "Нажмите для отправки",
-                    input_message_content=InputTextMessageContent(
-                        message_text=(
-                            f"🎵 <b>{artist_name} — {track_title}</b>\n"
-                            f"⏱ <i>Длительность: {dur_str}</i>\n\n"
-                            f"<blockquote>Нажмите на кнопку ниже, чтобы получить аудиофайл трека в 320 kbps.</blockquote>\n"
-                            f"🎧 Скачано через @{bot_username}"
-                        ),
-                        parse_mode="HTML"
-                    ),
-                    reply_markup=card_kb
-                )
-            )
+        if uncached_tasks:
+            resolved = await asyncio.gather(*(resolve_audio(idx, t) for idx, t in uncached_tasks))
+            for r in resolved:
+                if r:
+                    valid_results.append(r)
 
-        await inline_query.answer(items, cache_time=15, is_personal=True)
+        # Отправляем только те треки, которые стали реальным Аудио
+        await inline_query.answer(valid_results, cache_time=10, is_personal=True)
 
     except Exception as e:
-        print(f"❌ [INLINE ERROR]: {e}")
+        print(f"❌ [INLINE GLOBAL ERROR]: {e}")
         await inline_query.answer([], cache_time=2, is_personal=True)
+
 
 # --- ВЕБ-сервер и запуск ---
 
