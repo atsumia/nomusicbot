@@ -414,9 +414,7 @@ async def callback_download(callback: CallbackQuery):
         user_id, 
         item['id'], 
         item['url'], 
-        status_msg,
-        artist_id=item.get('artist_id'),
-        album_id=item.get('album_id')
+        status_msg
     )
 
 @dp.callback_query(F.data.startswith("confirm_dl:"))
@@ -446,9 +444,7 @@ async def callback_confirm_download(callback: CallbackQuery):
         user_id, 
         item['id'], 
         item['url'], 
-        status_msg,
-        artist_id=item.get('artist_id'),
-        album_id=item.get('album_id')
+        status_msg
     )
 
 @dp.callback_query(F.data == "back_to_results")
@@ -479,12 +475,12 @@ async def callback_dl_db(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
-async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message, artist_id=None, album_id=None):
+async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message):
     file_path = None
     thumb_path = None
     try:
         await status_msg.edit_text("⏳ Загружаю аудиозапись...")
-        # При скачивании трека из Яндекса мы получаем полный объект с актуальными ID
+        # Скачиваем трек и ОДНОВРЕМЕННО вытаскиваем его ID альбома/артиста 
         track = await download_track(url)
         file_path = track['file_path']
         thumb_path = track.get('thumb_path')
@@ -501,14 +497,13 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         kb_buttons = []
         smart_row = []
         
-        # Надежное извлечение идентификаторов: сначала из самого трека, затем из сессии поиска
-        a_id = track.get('artist_id') or artist_id
-        al_id = track.get('album_id') or album_id
+        # Надежное формирование кнопок. Данные берутся из скачанного файла!
+        al_id = track.get('album_id')
+        a_id = track.get('artist_id')
 
-        # Формируем умные кнопки, если это трек с официальных площадок
-        if al_id and str(al_id).strip() not in ["None", ""]:
+        if al_id and str(al_id).strip() not in ["None", "", "0"]:
             smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{al_id}"))
-        if a_id and str(a_id).strip() not in ["None", ""]:
+        if a_id and str(a_id).strip() not in ["None", "", "0"]:
             smart_row.append(InlineKeyboardButton(text="👤 Топ артиста", callback_data=f"artist_top:{a_id}"))
             
         if smart_row:
