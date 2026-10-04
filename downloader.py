@@ -26,7 +26,6 @@ async def get_ym_client():
             print(f"Yandex Music init error: {e}")
     return ym_client
 
-# Проверенный словарь алиасов
 ARTIST_ALIASES = {
     'макан': 'MACAN',
     'macan': 'MACAN',
@@ -61,7 +60,9 @@ ARTIST_ALIASES = {
     'капсайз': 'CUPSIZE',
     'cupsize': 'CUPSIZE',
     'плм': 'ПОЛМАТЕРИ',
-    'полматери': 'ПОЛМАТЕРИ'
+    'полматери': 'ПОЛМАТЕРИ',
+    'серега пират': 'Серёга Пират',
+    'серёга пират': 'Серёга Пират'
 }
 
 MAX_CACHE_SIZE = 500
@@ -193,26 +194,32 @@ def prepare_telegram_cover(raw_img_path: str, output_path: str):
         return None
 
 def format_ym_track(track):
+    real_track = getattr(track, 'track', None) or track
+    
     try:
-        artists = ", ".join([a.name for a in track.artists if getattr(a, 'name', None)])
+        artists = ", ".join([a.name for a in real_track.artists if getattr(a, 'name', None)])
     except Exception:
         artists = "Артист"
 
-    artist_id = str(track.artists[0].id) if getattr(track, 'artists', None) and len(track.artists) > 0 else None
+    artist_id = str(real_track.artists[0].id) if getattr(real_track, 'artists', None) and len(real_track.artists) > 0 else None
     album_id = None
     album_title = None
-    if getattr(track, 'albums', None) and len(track.albums) > 0:
-        album_id = str(track.albums[0].id)
-        album_title = str(getattr(track.albums[0], 'title', 'Альбом'))
+    if getattr(real_track, 'albums', None) and len(real_track.albums) > 0:
+        album_id = str(real_track.albums[0].id)
+        album_title = str(getattr(real_track.albums[0], 'title', 'Альбом'))
+
+    track_id = getattr(real_track, 'id', None) or getattr(track, 'id', '0')
+    title = getattr(real_track, 'title', None) or getattr(track, 'title', 'Без названия')
+    duration_ms = getattr(real_track, 'duration_ms', 0) or getattr(track, 'duration_ms', 0) or 0
 
     return {
-        'id': f"ym_{track.id}",
-        'raw_id': str(track.id),
-        'title': track.title or "Без названия",
+        'id': f"ym_{track_id}",
+        'raw_id': str(track_id),
+        'title': title,
         'uploader': artists or "Артист",
-        'url': f"ym://{track.id}",
-        'duration_ms': getattr(track, 'duration_ms', 0) or 0,
-        'duration': int((getattr(track, 'duration_ms', 0) or 0) / 1000),
+        'url': f"ym://{track_id}",
+        'duration_ms': duration_ms,
+        'duration': int(duration_ms / 1000),
         'artist_id': artist_id,
         'album_id': album_id,
         'album_title': album_title,
@@ -260,17 +267,23 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
             if getattr(sr, 'artists', None) and getattr(sr.artists, 'results', None):
                 for artist in sr.artists.results:
                     if artist.name and artist.name.lower() == query.lower():
-                        artist_info = await client.artists_brief_info(artist.id)
-                        if artist_info and getattr(artist_info, 'popular_tracks', None):
-                            all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+                        try:
+                            artist_info = await client.artists_brief_info(artist.id)
+                            if artist_info and getattr(artist_info, 'popular_tracks', None):
+                                all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+                        except Exception:
+                            pass
                         break 
 
             if getattr(sr, 'best', None):
                 if getattr(sr.best, 'type', None) == 'artist':
                     art_id = sr.best.result.id
-                    artist_info = await client.artists_brief_info(art_id)
-                    if artist_info and getattr(artist_info, 'popular_tracks', None):
-                        all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+                    try:
+                        artist_info = await client.artists_brief_info(art_id)
+                        if artist_info and getattr(artist_info, 'popular_tracks', None):
+                            all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+                    except Exception:
+                        pass
                 elif getattr(sr.best, 'type', None) == 'track':
                     all_tracks.append(format_ym_track(sr.best.result))
 
@@ -285,20 +298,26 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
     filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
     return filtered_tracks[:limit]
 
-async def search_artist_discography(artist_query: str, limit: int = 50):
-    client = await get_ym_client()
+async def search_artist_discography(artist_query: str, mode: str = "official", limit: int = 50):
     normalized_artist = await resolve_dynamic_query(artist_query)
     target_name = normalized_artist or artist_query
 
-    all_artist_tracks = []
-    target_artist_id = None
-    target_artist_name = target_name
+    # 1. Режим: Только официальные площадки (БЕЗ переходов на SoundCloud)
+    if mode == "official":
+        client = await get_ym_client()
+        if not client: 
+            return []
 
-    # 1. Попытка получить официальную дискографию через Яндекс Музыку
-    if client:
+        all_artist_tracks = []
+        target_artist_id = None
+        target_artist_name = target_name
+
         try:
             # А. Поиск через тип 'all'
             sr_all = await client.search(text=target_name, type_='all', page=0)
+            if not sr_all and target_name.lower() != artist_query.lower():
+                sr_all = await client.search(text=artist_query, type_='all', page=0)
+
             if sr_all:
                 if getattr(sr_all, 'best', None) and getattr(sr_all.best, 'type', None) == 'artist':
                     target_artist_id = sr_all.best.result.id
@@ -312,7 +331,7 @@ async def search_artist_discography(artist_query: str, limit: int = 50):
                         target_artist_id = first_track.artists[0].id
                         target_artist_name = getattr(first_track.artists[0], 'name', target_name)
 
-            # Б. Если ID артиста найден — вытягиваем топ и альбомы
+            # Б. Выгрузка популярных треков по ID
             if target_artist_id:
                 try:
                     artist_info = await client.artists_brief_info(int(target_artist_id))
@@ -324,44 +343,48 @@ async def search_artist_discography(artist_query: str, limit: int = 50):
                 try:
                     more_tracks = await client.artists_tracks(int(target_artist_id), page=0, page_size=limit)
                     if more_tracks and getattr(more_tracks, 'tracks', None):
-                        track_ids = [t.id for t in more_tracks.tracks if getattr(t, 'id', None)]
-                        if track_ids:
-                            full_tracks = await client.tracks(track_ids[:limit])
-                            if full_tracks:
-                                all_artist_tracks.extend([format_ym_track(t) for t in full_tracks])
+                        for t in more_tracks.tracks:
+                            try:
+                                all_artist_tracks.append(format_ym_track(t))
+                            except Exception:
+                                pass
                 except Exception as e:
                     print(f"Artist tracks fetch error: {e}")
 
-            # В. Запасной официальный вариант: прямой поиск по трекам артиста
-            if not all_artist_tracks:
-                sr_tracks = await client.search(text=target_name, type_='track', page=0)
-                if sr_tracks and getattr(sr_tracks, 'tracks', None) and getattr(sr_tracks.tracks, 'results', None):
-                    all_artist_tracks.extend([format_ym_track(t) for t in sr_tracks.tracks.results])
+            # В. Прямой поиск официальных треков исполнителя
+            if len(all_artist_tracks) < 10:
+                try:
+                    sr_tracks = await client.search(text=target_name, type_='track', page=0)
+                    if sr_tracks and getattr(sr_tracks, 'tracks', None) and getattr(sr_tracks.tracks, 'results', None):
+                        all_artist_tracks.extend([format_ym_track(t) for t in sr_tracks.tracks.results])
+                except Exception as e:
+                    print(f"Direct tracks search error: {e}")
 
         except Exception as e:
             print(f"YM Artist discography search error for '{artist_query}': {e}")
 
-    # Если треки на Яндекс Музыке найдены
-    unique_ym = deduplicate_tracks(all_artist_tracks)
-    if unique_ym:
-        for t in unique_ym:
+        unique_ym = deduplicate_tracks(all_artist_tracks)
+        filtered_ym = strict_text_filter(unique_ym, target_name, artist_query)
+        final_list = filtered_ym if filtered_ym else unique_ym
+
+        for t in final_list:
             t['artist_display_name'] = target_artist_name
             t['source'] = 'official'
-        return unique_ym[:limit]
 
-    # 2. Безусловный Fallback на SoundCloud, если Яндекс недоступен или пуст
-    print(f"Fallback to SoundCloud for artist discography: {target_name}")
-    loop = asyncio.get_event_loop()
-    sc_results = await loop.run_in_executor(None, search_sc_sync, target_name, limit, artist_query)
-    
-    if not sc_results and target_name.lower() != artist_query.lower():
-        sc_results = await loop.run_in_executor(None, search_sc_sync, artist_query, limit, artist_query)
+        return final_list[:limit]
 
-    for item in sc_results:
-        item['artist_display_name'] = target_name
-        item['source'] = 'soundcloud'
+    # 2. Режим: Только SoundCloud
+    else:
+        loop = asyncio.get_event_loop()
+        sc_results = await loop.run_in_executor(None, search_sc_sync, target_name, limit, artist_query)
+        if not sc_results and target_name.lower() != artist_query.lower():
+            sc_results = await loop.run_in_executor(None, search_sc_sync, artist_query, limit, artist_query)
 
-    return sc_results[:limit]
+        for item in sc_results:
+            item['artist_display_name'] = target_name
+            item['source'] = 'soundcloud'
+
+        return sc_results[:limit]
 
 async def get_ym_album_tracks(album_id: str):
     client = await get_ym_client()
@@ -396,11 +419,11 @@ async def get_ym_artist_top(artist_id: str):
         try:
             more = await client.artists_tracks(int(artist_id), page=0, page_size=50)
             if more and getattr(more, 'tracks', None):
-                track_ids = [t.id for t in more.tracks if getattr(t, 'id', None)]
-                if track_ids:
-                    full_tracks = await client.tracks(track_ids[:50])
-                    if full_tracks:
-                        tracks.extend([format_ym_track(t) for t in full_tracks])
+                for t in more.tracks:
+                    try:
+                        tracks.append(format_ym_track(t))
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -655,13 +678,14 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     normalized_query = await resolve_dynamic_query(query)
     
+    # Режим "Официальные" строго изолирован: никакого fallback на SoundCloud!
     if mode == "official":
         ym_results = await search_yandex(normalized_query, limit=limit, original_query=query)
         if not ym_results and query.strip().lower() != normalized_query.lower():
             ym_results = await search_yandex(query.strip(), limit=limit, original_query=query)
-        if ym_results:
-            return ym_results
+        return ym_results
 
+    # Режим "SoundCloud" строго изолирован
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, search_sc_sync, normalized_query, limit, query)
 
