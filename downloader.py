@@ -49,8 +49,40 @@ ARTIST_ALIASES = {
     'лсп': 'ЛСП',
     'lsp': 'ЛСП',
     'кино': 'Кино',
-    'баста': 'Баста'
+    'баста': 'Баста',
+    'гуф': 'GUF',
+    'инстасамка': 'INSTASAMKA',
+    'каста': 'Каста',
+    'король и шут': 'Король и Шут',
+    'киш': 'Король и Шут'
 }
+
+def normalize_search_query(query: str) -> str:
+    """
+    Интеллектуальная нормализация запроса: заменяет русские транслитерации 
+    на официальные названия артистов, сохраняя остальные слова в запросе.
+    """
+    if not query:
+        return ""
+    
+    query_lower = query.strip().lower()
+    
+    # 1. Проверка полного совпадения (например, просто "макан")
+    if query_lower in ARTIST_ALIASES:
+        return ARTIST_ALIASES[query_lower]
+        
+    normalized = query
+    # 2. Сортируем ключи по убыванию длины, чтобы фразы (биг бейби тейп) 
+    # обрабатывались раньше отдельных слов (тейп)
+    sorted_keys = sorted(ARTIST_ALIASES.keys(), key=len, reverse=True)
+    
+    for key in sorted_keys:
+        if key in query_lower:
+            # Заменяем только целые слова, игнорируя регистр
+            pattern = r'(?i)\b' + re.escape(key) + r'\b'
+            normalized = re.sub(pattern, ARTIST_ALIASES[key], normalized)
+            
+    return normalized.strip()
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
     tag_detected = None
@@ -173,14 +205,13 @@ async def search_yandex(query: str, limit: int = 15):
     if not client: 
         return []
 
-    q_clean = query.strip().lower()
-    search_queries = [query.strip()]
+    # Применяем интеллектуальную нормализацию к запросу
+    normalized_query = normalize_search_query(query)
+    search_queries = [normalized_query]
     
-    # Применяем карту соответствия артистов в начало списка запросов
-    if q_clean in ARTIST_ALIASES:
-        alias_name = ARTIST_ALIASES[q_clean]
-        if alias_name not in search_queries:
-            search_queries.insert(0, alias_name)
+    # Если нормализованный запрос отличается от оригинального, добавляем оригинал как фоллбэк
+    if query.strip().lower() != normalized_query.lower():
+        search_queries.append(query.strip())
 
     all_tracks = []
 
@@ -330,9 +361,12 @@ def search_sc_sync(query: str, limit: int = 15):
     }
     
     entries = []
+    # Нормализуем запрос перед поиском в SoundCloud, чтобы избежать любительских тегов
+    normalized_query = normalize_search_query(query)
+    
     with yt_dlp.YoutubeDL(search_opts) as ydl:
         try:
-            res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
+            res = ydl.extract_info(f"scsearch{limit}:{normalized_query}", download=False)
             entries = res.get('entries', []) or []
         except Exception:
             pass
