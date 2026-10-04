@@ -1,5 +1,4 @@
 import os
-import json
 import asyncio
 from dotenv import load_dotenv
 
@@ -21,8 +20,7 @@ from aiogram.types import (
     InlineQuery,
     InlineQueryResultCachedAudio,
     InlineQueryResultArticle,
-    InputTextMessageContent,
-    WebAppInfo
+    InputTextMessageContent
 )
 
 import database
@@ -36,9 +34,6 @@ from downloader import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-# Ссылка на Mini App (GitHub Pages)
-WEBAPP_URL = "https://atsumia.github.io/nomusicbot/"
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан!")
@@ -76,18 +71,9 @@ def get_bottom_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     mode_label = "Режим: Официальные" if user['search_mode'] == 'official' else "Режим: SoundCloud"
     
     keyboard = [
-        [
-            KeyboardButton(text="🎵 Открыть плеер", web_app=WebAppInfo(url=WEBAPP_URL)),
-            KeyboardButton(text="🔎 Поиск")
-        ],
-        [
-            KeyboardButton(text="🎙 Поиск артиста"),
-            KeyboardButton(text="📝 Поиск по тексту")
-        ],
-        [
-            KeyboardButton(text="👤 Мой кабинет"),
-            KeyboardButton(text=f"🎧 {mode_label}")
-        ]
+        [KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="🎙 Поиск артиста")],
+        [KeyboardButton(text="📝 Поиск по тексту"), KeyboardButton(text=f"🎧 {mode_label}")],
+        [KeyboardButton(text="👤 Мой кабинет")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -96,7 +82,6 @@ def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
     
     keyboard = [
-        [InlineKeyboardButton(text="✨ Открыть NoMusic Player", web_app=WebAppInfo(url=WEBAPP_URL))],
         [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
          InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
         [InlineKeyboardButton(text="📝 Поиск по тексту песни", callback_data="menu:lyrics_search")],
@@ -124,44 +109,6 @@ def get_admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🩺 Диагностика системы", callback_data="admin:diag")],
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
     ])
-
-# ================= ХЭНДЛЕР MINI APP (ЧЕРЕЗ ВЕБ-ХОСТИНГ) =================
-@dp.message(F.web_app_data)
-async def web_app_download_handler(message: types.Message):
-    """
-    Резервный хэндлер клика из WebApp (если открыт через обычную клавиатуру)
-    """
-    try:
-        data = json.loads(message.web_app_data.data)
-        action = data.get("action")
-        
-        if action == "download_track":
-            query = data.get("query", "").strip()
-            if not query:
-                return
-            
-            user = database.get_user(message.from_user.id)
-            mode = user.get('search_mode', 'official')
-            status_msg = await message.answer(f"⚡ <i>Загружаю из плеера:</i> <b>{query}</b>...", parse_mode="HTML")
-            
-            results = await search_tracks(query, mode=mode, limit=1)
-            if not results:
-                await status_msg.edit_text("Не удалось найти аудиопоток для скачивания 🥲")
-                return
-            
-            track = results[0]
-            await process_and_send_audio(
-                message.chat.id, 
-                message.from_user.id, 
-                track['id'], 
-                track['url'], 
-                status_msg,
-                artist_id=track.get('artist_id'),
-                album_id=track.get('album_id')
-            )
-    except Exception as e:
-        await message.answer(f"⚠️ Ошибка обработки запроса из плеера: {e}")
-# ===========================================================================
 
 @dp.message(Command("admin"))
 async def admin_command_handler(message: types.Message):
@@ -356,7 +303,7 @@ async def start_handler(message: types.Message):
         "👋 <b>Привет! Это NoMusic.</b>\n\n"
         "Сервис предназначен для поиска и загрузки аудиозаписей.\n\n"
         "<blockquote>💡 <i>Чтобы найти трек, отправь его название, строчку из текста или ссылку. "
-        "Для дискографии нажми «🎙 Поиск артиста» или открой веб-плеер.</i></blockquote>"
+        "Для дискографии нажми «🎙 Поиск артиста».</i></blockquote>"
     )
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
     await message.answer("🎛 <b>Навигация и управление:</b>", reply_markup=inline_kb, parse_mode="HTML")
@@ -510,7 +457,7 @@ async def show_favorites(callback: CallbackQuery):
     for db_id, track_id, title, artist, url in records:
         buttons.append([InlineKeyboardButton(text=f"❤️ {artist} - {title}"[:40], callback_data=f"dl_db:favorites:{db_id}")])
     buttons.append([InlineKeyboardButton(text="🔙 Назад в кабинет", callback_data="menu:profile")])
-    await callback.message.edit_text("❤️️ <b>Твое избранное:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
+    await callback.message.edit_text("❤️ <b>Твое избранное:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="HTML")
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("fav:"))
@@ -592,7 +539,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
             mode_lbl = "на официальных площадках" if user_mode == "official" else "в SoundCloud"
             switch_kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text="☁️ Попробовать в SoundCloud" if user_mode == "official" else "🎵 Попробовать на оф. площадках",
+                    text="☁️️ Попробовать в SoundCloud" if user_mode == "official" else "🎵 Попробовать на оф. площадках",
                     callback_data="switch:remix" if user_mode == "official" else "switch:official"
                 )
             ]])
@@ -1059,140 +1006,6 @@ async def inline_search_handler(inline_query: InlineQuery):
         print(f"❌ [INLINE LOCAL DB ERROR]: {e}")
         await inline_query.answer([], cache_time=2, is_personal=True)
 
-# ================= REST API ДЛЯ MINI APP =================
-
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Content-Type": "application/json"
-}
-
-async def api_options_handler(request: web.Request):
-    return web.Response(headers=CORS_HEADERS)
-
-async def api_search_handler(request: web.Request):
-    """
-    Поиск через алгоритмы бота с учетом алиасов и ранжирования
-    """
-    query = request.query.get("q", "").strip()
-    mode = request.query.get("mode", "official")
-    
-    if not query:
-        return web.json_response({"results": []}, headers=CORS_HEADERS)
-
-    try:
-        results = await search_tracks(query, mode=mode, limit=15)
-        formatted = []
-        for t in results:
-            formatted.append({
-                "id": str(t.get("id")),
-                "title": t.get("title"),
-                "artist": t.get("uploader") or t.get("artist") or "Исполнитель",
-                "cover": t.get("thumb_path") or t.get("cover") or "",
-                "duration": t.get("duration", 0),
-                "url": t.get("url"),
-                "audio": t.get("preview_url") or t.get("audio") or ""
-            })
-        return web.json_response({"results": formatted}, headers=CORS_HEADERS)
-    except Exception as e:
-        return web.json_response({"error": str(e), "results": []}, headers=CORS_HEADERS)
-
-async def api_user_data_handler(request: web.Request):
-    """
-    Синхронизация медиатеки: отдает настоящее избранное и историю из SQLite
-    """
-    user_id_raw = request.query.get("user_id")
-    if not user_id_raw or not user_id_raw.isdigit():
-        return web.json_response({"favorites": [], "history": []}, headers=CORS_HEADERS)
-        
-    user_id = int(user_id_raw)
-    try:
-        user = database.get_user(user_id)
-        raw_favs = database.get_favorites(user_id) or []
-        raw_hist = database.get_history(user_id) or []
-        
-        favs = [{"db_id": r[0], "id": r[1], "title": r[2], "artist": r[3], "url": r[4]} for r in raw_favs]
-        hist = [{"db_id": r[0], "id": r[1], "title": r[2], "artist": r[3], "url": r[4]} for r in raw_hist]
-        
-        return web.json_response({
-            "search_mode": user.get("search_mode", "official"),
-            "favorites": favs,
-            "history": hist
-        }, headers=CORS_HEADERS)
-    except Exception as e:
-        return web.json_response({"error": str(e), "favorites": [], "history": []}, headers=CORS_HEADERS)
-
-async def api_toggle_favorite_handler(request: web.Request):
-    """
-    Синхронизация сердечка: ставит лайк прямо в SQLite базе бота
-    """
-    try:
-        data = await request.json()
-        user_id = int(data.get("user_id"))
-        track_id = str(data.get("track_id"))
-        is_fav = database.toggle_favorite(user_id, track_id)
-        return web.json_response({"success": True, "is_favorite": is_fav}, headers=CORS_HEADERS)
-    except Exception as e:
-        return web.json_response({"error": str(e)}, headers=CORS_HEADERS)
-
-async def api_download_handler(request: web.Request):
-    """
-    Клик 'Скачать полный MP3 в чат' из плеера (работает даже из Menu Button)
-    """
-    try:
-        data = await request.json()
-        user_id = int(data.get("user_id"))
-        query = data.get("query", "").strip()
-        url = data.get("url")
-        track_id = data.get("track_id") or "miniapp_track"
-        
-        if not user_id or not query:
-            return web.json_response({"error": "Missing params"}, headers=CORS_HEADERS)
-            
-        asyncio.create_task(background_miniapp_download(user_id, query, track_id, url))
-        return web.json_response({"status": "started"}, headers=CORS_HEADERS)
-    except Exception as e:
-        return web.json_response({"error": str(e)}, headers=CORS_HEADERS)
-
-async def background_miniapp_download(user_id: int, query: str, track_id: str, url: str = None):
-    try:
-        user = database.get_user(user_id)
-        mode = user.get('search_mode', 'official')
-        status_msg = await bot.send_message(user_id, f"⚡ <i>Загружаю из плеера:</i> <b>{query}</b>...", parse_mode="HTML")
-        
-        target_url = url
-        final_track_id = track_id
-        artist_id = None
-        album_id = None
-
-        if not target_url:
-            results = await search_tracks(query, mode=mode, limit=1)
-            if not results:
-                await status_msg.edit_text("Не удалось найти аудиопоток для скачивания 🥲")
-                return
-            t = results[0]
-            target_url = t['url']
-            final_track_id = t['id']
-            artist_id = t.get('artist_id')
-            album_id = t.get('album_id')
-
-        await process_and_send_audio(
-            user_id,
-            user_id,
-            final_track_id,
-            target_url,
-            status_msg,
-            artist_id=artist_id,
-            album_id=album_id
-        )
-    except Exception as e:
-        try:
-            await bot.send_message(user_id, f"⚠️ Ошибка загрузки из плеера: {e}")
-        except Exception:
-            pass
-# =========================================================
-
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
 
@@ -1201,19 +1014,6 @@ async def start_dummy_web_server():
     app.router.add_get('/', handle_health_check)
     app.router.add_get('/health', handle_health_check)
     
-    # REST API для полной связки с Mini App
-    app.router.add_get('/api/search', api_search_handler)
-    app.router.add_options('/api/search', api_options_handler)
-    
-    app.router.add_get('/api/user_data', api_user_data_handler)
-    app.router.add_options('/api/user_data', api_options_handler)
-
-    app.router.add_post('/api/favorite', api_toggle_favorite_handler)
-    app.router.add_options('/api/favorite', api_options_handler)
-
-    app.router.add_post('/api/download', api_download_handler)
-    app.router.add_options('/api/download', api_options_handler)
-
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
