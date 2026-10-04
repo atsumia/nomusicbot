@@ -64,7 +64,7 @@ ARTIST_ALIASES = {
     'полматери': 'ПОЛМАТЕРИ'
 }
 
-# Динамический кэш с лимитом размера для защиты RAM на Render (512 МБ)
+# Динамический кэш с лимитом размера
 MAX_CACHE_SIZE = 500
 DYNAMIC_ALIASES_CACHE = {}
 
@@ -74,12 +74,29 @@ async def resolve_dynamic_query(query: str) -> str:
         
     query_lower = query.strip().lower()
     
+    # 1. Прямое совпадение
     if query_lower in ARTIST_ALIASES:
         return ARTIST_ALIASES[query_lower]
         
+    # 2. Замена внутри фразы (например, "плм маша" -> "ПОЛМАТЕРИ маша")
+    normalized = query
+    sorted_aliases = sorted(ARTIST_ALIASES.keys(), key=len, reverse=True)
+    replaced_something = False
+    for key in sorted_aliases:
+        pattern = r'(?i)\b' + re.escape(key) + r'\b'
+        if re.search(pattern, normalized):
+            normalized = re.sub(pattern, ARTIST_ALIASES[key], normalized)
+            replaced_something = True
+            
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    if replaced_something:
+        return normalized
+
+    # 3. Кэш
     if query_lower in DYNAMIC_ALIASES_CACHE:
         return DYNAMIC_ALIASES_CACHE[query_lower]
 
+    # 4. Apple Music Fallback (Исправлено склеивание артиста и трека)
     safe_term = urllib.parse.quote(query)
     url = f"https://itunes.apple.com/search?term={safe_term}&entity=song&limit=1"
     
@@ -95,14 +112,24 @@ async def resolve_dynamic_query(query: str) -> str:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
                     if data.get('results'):
-                        official_artist = data['results'][0].get('artistName', query)
+                        item = data['results'][0]
+                        artist = item.get('artistName', '')
+                        track = item.get('trackName', '')
                         
+                        # Сохраняем обе части, чтобы не стирать название песни
+                        if artist and track:
+                            resolved = f"{artist} {track}"
+                        elif artist:
+                            resolved = artist
+                        else:
+                            resolved = query
+                            
                         if len(DYNAMIC_ALIASES_CACHE) >= MAX_CACHE_SIZE:
                             first_key = next(iter(DYNAMIC_ALIASES_CACHE))
                             del DYNAMIC_ALIASES_CACHE[first_key]
                             
-                        DYNAMIC_ALIASES_CACHE[query_lower] = official_artist
-                        return official_artist
+                        DYNAMIC_ALIASES_CACHE[query_lower] = resolved
+                        return resolved
     except Exception as e:
         print(f"iTunes API Fallback triggered for '{query}': {e}")
         
@@ -225,10 +252,15 @@ def deduplicate_tracks(tracks: list) -> list:
     return unique
 
 def strict_text_filter(tracks: list, original_query: str, normalized_query: str) -> list:
+    """Улучшенная фильтрация с корректной обработкой слов любой длины"""
     filtered = []
     
-    orig_words = set(re.findall(r'\b\w{2,}\b', original_query.lower()))
-    norm_words = set(re.findall(r'\b\w{2,}\b', normalized_query.lower()))
+    def extract_words(text):
+        clean = re.sub(r'[^\w\s]', '', text.lower())
+        return set([w for w in clean.split() if len(w) >= 2])
+        
+    orig_words = extract_words(original_query)
+    norm_words = extract_words(normalized_query)
     check_words = orig_words.union(norm_words)
     
     if not check_words:
@@ -236,34 +268,34 @@ def strict_text_filter(tracks: list, original_query: str, normalized_query: str)
         
     for t in tracks:
         track_text = f"{t.get('uploader', '')} {t.get('title', '')}".lower()
-        # Пропускаем, если хоть одно слово из оригинального ИЛИ нормализованного запроса есть в треке
         if any(word in track_text for word in check_words):
             filtered.append(t)
             
     return filtered
 
 def rank_tracks_by_exact_match(tracks: list, original_query: str, normalized_query: str) -> list:
-    """
-    Агрессивное ранжирование: треки, где есть ВСЕ слова из запроса (автор + название),
-    получают огромный буст и взлетают на 1-е место (решает проблему "плм маша").
-    """
-    orig_words = set(re.findall(r'\b\w{2,}\b', original_query.lower()))
-    norm_words = set(re.findall(r'\b\w{2,}\b', normalized_query.lower()))
+    """Умное ранжирование: трек с максимумом совпадений поднимается наверх"""
+    def extract_words(text):
+        clean = re.sub(r'[^\w\s]', '', text.lower())
+        return set([w for w in clean.split() if len(w) >= 2])
+
+    orig_words = extract_words(original_query)
+    norm_words = extract_words(normalized_query)
     check_words = orig_words.union(norm_words)
-    
+
     if not check_words:
         return tracks
-        
+
     def track_score(t):
         score = 0
         title_lower = t.get('title', '').lower()
         uploader_lower = t.get('uploader', '').lower()
         combined = f"{uploader_lower} {title_lower}"
-        
-        # Полное совпадение всей фразы дает максимум очков
+
+        # Точное вхождение фразы
         if original_query.lower() in combined or normalized_query.lower() in combined:
             score += 200
-            
+
         match_count = 0
         for word in check_words:
             if word in title_lower:
@@ -272,14 +304,12 @@ def rank_tracks_by_exact_match(tracks: list, original_query: str, normalized_que
             elif word in uploader_lower:
                 score += 5
                 match_count += 1
-                
-        # Если все слова из запроса присутствуют, даем мощный буст
-        if match_count >= len(orig_words):
+
+        if match_count >= len(orig_words) and len(orig_words) > 0:
             score += 100
-            
+
         return score
-        
-    # Сортируем по убыванию очков
+
     return sorted(tracks, key=track_score, reverse=True)
 
 
@@ -289,33 +319,30 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
         return []
 
     all_tracks = []
-    
     try:
         sr = await client.search(text=query, type_='all', page=0)
         if sr:
-            artist_found = False
-
-            # 1. Приоритетный поиск официального профиля артиста
+            # 1. Проверяем блок артистов, но НЕ ОСТАНАВЛИВАЕМСЯ на нем
             if getattr(sr, 'artists', None) and getattr(sr.artists, 'results', None):
                 for artist in sr.artists.results:
                     if artist.name and artist.name.lower() == query.lower():
                         artist_info = await client.artists_brief_info(artist.id)
                         if artist_info and getattr(artist_info, 'popular_tracks', None):
                             all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
-                            artist_found = True
                         break 
 
-            # 2. Если точный профиль не найден, проверяем блок best
-            if not artist_found and getattr(sr, 'best', None):
+            # 2. ВСЕГДА проверяем блок best (здесь прячутся точные треки)
+            if getattr(sr, 'best', None):
                 if getattr(sr.best, 'type', None) == 'artist':
                     art_id = sr.best.result.id
-                    artist_info = await client.artists_brief_info(art_id)
-                    if artist_info and getattr(artist_info, 'popular_tracks', None):
-                        all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+                    if not any(t.get('artist_id') == str(art_id) for t in all_tracks):
+                        artist_info = await client.artists_brief_info(art_id)
+                        if artist_info and getattr(artist_info, 'popular_tracks', None):
+                            all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
                 elif getattr(sr.best, 'type', None) == 'track':
                     all_tracks.append(format_ym_track(sr.best.result))
 
-            # 3. Основная поисковая выдача
+            # 3. ВСЕГДА берем основную выдачу треков
             if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
                 all_tracks.extend([format_ym_track(t) for t in sr.tracks.results])
 
@@ -445,7 +472,6 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
     }
     
     entries = []
-    
     with yt_dlp.YoutubeDL(search_opts) as ydl:
         try:
             res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
@@ -479,7 +505,6 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
             'duration': entry.get('duration') or 0
         })
         
-    # Применяем фильтр к саундклауду ТОЖЕ, чтобы убрать спам вроде "hood trapppa"
     unique_tracks = deduplicate_tracks(results)
     query_to_check = original_query if original_query else query
     filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
@@ -514,10 +539,9 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
                 mp3_path = f"{base}.mp3"
                 return mp3_path, base, info
         except yt_dlp.utils.DownloadError as e:
-            # Изящный перехват ошибки защиты авторских прав (DRM)
             if "DRM protected" in str(e) or "DRM" in str(e):
                 raise Exception("Трек защищен правообладателем (DRM SoundCloud Premium) и недоступен для скачивания 😔")
-            raise Exception("Ошибка загрузки из SoundCloud. Возможно, трек был удален.")
+            raise Exception("Ошибка загрузки из SoundCloud.")
         except Exception as e:
             raise Exception(f"Внутренняя ошибка загрузки: {str(e)}")
 
@@ -614,15 +638,12 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     normalized_query = await resolve_dynamic_query(query)
     
-    # 1. Формируем пул запросов для проверки
+    # Пулл запросов: нормализованный, оригинальный, и реверсивный (если слов > 1)
     queries_to_try = [normalized_query]
-    
-    # Если нормализация сработала, добавим оригинальный запрос
     if query.strip().lower() != normalized_query.lower():
         if query.strip() not in queries_to_try:
             queries_to_try.append(query.strip())
             
-    # REVERSE FALLBACK: Меняем слова местами, чтобы обмануть Яндекс ("addiction lonown" -> "lonown addiction")
     orig_words = query.strip().split()
     if len(orig_words) > 1:
         mid = len(orig_words) // 2
@@ -636,9 +657,9 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
             ym_results = await search_yandex(q, limit=limit, original_query=query)
             pool.extend(ym_results)
             
-            # Если нашли точное совпадение, не делаем лишних запросов
+            # Ранняя остановка, если нашли идеальное совпадение
             best_match_found = False
-            check_words = set(re.findall(r'\b\w{2,}\b', query.lower()))
+            check_words = set([w for w in re.sub(r'[^\w\s]', '', query.lower()).split() if len(w)>=2])
             for t in ym_results:
                 text = f"{t.get('uploader','')} {t.get('title','')}".lower()
                 if check_words and all(w in text for w in check_words):
@@ -653,7 +674,6 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
             ranked = rank_tracks_by_exact_match(unique_pool, query, normalized_query)
             return ranked[:limit]
 
-    # Поиск в SoundCloud с теми же мощными фильтрами и перестановками
     loop = asyncio.get_event_loop()
     pool = []
     for q in queries_to_try[:2]: 
@@ -661,7 +681,7 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
         pool.extend(sc_results)
         
         best_match_found = False
-        check_words = set(re.findall(r'\b\w{2,}\b', query.lower()))
+        check_words = set([w for w in re.sub(r'[^\w\s]', '', query.lower()).split() if len(w)>=2])
         for t in sc_results:
             text = f"{t.get('uploader','')} {t.get('title','')}".lower()
             if check_words and all(w in text for w in check_words):
