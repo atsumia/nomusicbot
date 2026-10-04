@@ -101,7 +101,7 @@ async def artist_search_start(message: types.Message):
     await message.answer(
         "🎙 <b>Поиск по артисту</b>\n\n"
         "Отправь имя исполнителя (например: <code>MACAN</code>, <code>CUPSIZE</code>, <code>Miyagi</code>).\n"
-        "Я выгружу его дискографию с официальных площадок с сортировкой по популярности.",
+        "Я выгружу его дискографию с сортировкой по популярности.",
         parse_mode="HTML"
     )
 
@@ -304,7 +304,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         }
 
         kb = build_search_keyboard(user_id, page=0)
-        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
+        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️️ Ремиксы (SoundCloud)"
         await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
@@ -315,14 +315,17 @@ async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_quer
         results = await search_artist_discography(artist_query, limit=50)
 
         if not results:
-            await status_msg.edit_text(f"Исполнитель «{artist_query}» не найден на официальных площадках 😔")
+            await status_msg.edit_text(f"Исполнитель «{artist_query}» не найден ни на одной из площадок 😔")
             return
 
-        artist_display_name = results[0].get('uploader', artist_query)
+        first_track = results[0]
+        artist_display_name = first_track.get('artist_display_name') or first_track.get('uploader') or artist_query
+        source = first_track.get('source', 'official')
+        source_label = "🎵 Официальные релизы" if source == 'official' else "☁️ SoundCloud"
 
         USER_SESSIONS[user_id] = {
             "query": artist_query,
-            "mode": "official",
+            "mode": "official" if source == 'official' else "remix",
             "results": results,
             "items": {},
             "current_page": 0,
@@ -333,6 +336,7 @@ async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_quer
         kb = build_search_keyboard(user_id, page=0)
         header_text = (
             f"👤 <b>Дискография:</b> {artist_display_name}\n"
+            f"🎧 <b>Источник:</b> {source_label}\n"
             f"📊 Найдено треков: <b>{len(results)}</b>\n"
             "<blockquote>🔥 Отсортировано по популярности</blockquote>"
         )
