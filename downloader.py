@@ -138,16 +138,30 @@ def prepare_telegram_cover(raw_img_path: str, output_path: str):
         return None
 
 def format_ym_track(track):
-    artists = ", ".join([a.name for a in track.artists if a.name]) if getattr(track, 'artists', None) else "Артист"
-    artist_id = track.artists[0].id if getattr(track, 'artists', None) and len(track.artists) > 0 else None
-    album_id = track.albums[0].id if getattr(track, 'albums', None) and len(track.albums) > 0 else None
-    album_title = track.albums[0].title if getattr(track, 'albums', None) and len(track.albums) > 0 else None
-    
+    try:
+        artists = ", ".join([a.name for a in track.artists if getattr(a, 'name', None)])
+    except Exception:
+        artists = "Артист"
+
+    artist_id = None
+    try:
+        if track.artists and len(track.artists) > 0:
+            artist_id = str(track.artists[0].id)
+    except Exception: pass
+
+    album_id = None
+    album_title = None
+    try:
+        if track.albums and len(track.albums) > 0:
+            album_id = str(track.albums[0].id)
+            album_title = str(track.albums[0].title)
+    except Exception: pass
+
     return {
         'id': f"ym_{track.id}",
         'raw_id': str(track.id),
         'title': track.title or "Без названия",
-        'uploader': artists,
+        'uploader': artists or "Артист",
         'url': f"ym://{track.id}",
         'duration_ms': track.duration_ms or 0,
         'duration': int(track.duration_ms / 1000) if getattr(track, 'duration_ms', None) else 0,
@@ -166,41 +180,61 @@ def deduplicate_tracks(tracks: list) -> list:
             unique.append(t)
     return unique
 
+def bubble_exact_matches(tracks: list, query: str) -> list:
+    """Умный сортировщик: борется с теневыми банами Яндекса, вытягивая точные совпадения на первое место"""
+    q = query.lower().strip()
+    tier1 = [] # Точное совпадение названия или Артист - Название
+    tier2 = [] # Запрос содержится в названии (например, если искали часть фразы)
+    tier3 = [] # Все остальное
+    
+    for t in tracks:
+        title = t.get('title', '').lower()
+        artist = t.get('uploader', '').lower()
+        full_name = f"{artist} - {title}"
+        
+        if q == title or q == artist or q == full_name:
+            tier1.append(t)
+        elif q in title or q in artist or q in full_name:
+            tier2.append(t)
+        else:
+            tier3.append(t)
+            
+    return deduplicate_tracks(tier1 + tier2 + tier3)
+
 async def search_yandex(query: str, limit: int = 15):
-    """Использует только нативный поиск Яндекса для максимальной релевантности"""
     client = await get_ym_client()
     if not client: return []
 
     try:
+        # Для Яндекса ищем запрос как есть, без транслитерации, чтобы не путать алгоритм
         sr = await client.search(text=query, type_='all', page=0)
         all_tracks = []
         
-        # 1. Принудительно вытягиваем самое точное совпадение на первое место
         if getattr(sr, 'best', None) and sr.best.type == 'track':
             all_tracks.append(format_ym_track(sr.best.result))
             
-        # 2. Добавляем остальные результаты
         if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
             for t in sr.tracks.results:
                 all_tracks.append(format_ym_track(t))
                 
-        # 3. Резервный поиск, если общий ничего не дал
         if not all_tracks:
             tr_sr = await client.search(text=query, type_='track', page=0)
             if getattr(tr_sr, 'tracks', None) and getattr(tr_sr.tracks, 'results', None):
                 for t in tr_sr.tracks.results:
                     all_tracks.append(format_ym_track(t))
 
-        return deduplicate_tracks(all_tracks)[:limit]
+        # Перехватываем результаты и сортируем их
+        all_tracks = bubble_exact_matches(all_tracks, query)
+        return all_tracks[:limit]
     except Exception as e:
         print(f"YM search error: {e}")
         return []
 
-async def get_ym_album_tracks(album_id: int):
+async def get_ym_album_tracks(album_id: str):
     client = await get_ym_client()
     if not client: return []
     try:
-        album = await client.albums_with_tracks(album_id)
+        album = await client.albums_with_tracks(int(album_id))
         if album and album.volumes:
             tracks = []
             for volume in album.volumes:
@@ -211,11 +245,11 @@ async def get_ym_album_tracks(album_id: int):
         print(f"Album error: {e}")
     return []
 
-async def get_ym_artist_top(artist_id: int):
+async def get_ym_artist_top(artist_id: str):
     client = await get_ym_client()
     if not client: return []
     try:
-        artist_info = await client.artists_brief_info(artist_id)
+        artist_info = await client.artists_brief_info(int(artist_id))
         if artist_info and getattr(artist_info, 'popular_tracks', None):
             raw_tracks = [format_ym_track(t) for t in artist_info.popular_tracks]
             return deduplicate_tracks(raw_tracks)[:15]
@@ -231,11 +265,17 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     if not tracks:
         raise Exception("Трек не найден")
     track = tracks[0]
-    artists = ", ".join([a.name for a in track.artists if a.name]) if getattr(track, 'artists', None) else "Артист"
+    
+    try:
+        artists = ", ".join([a.name for a in track.artists if getattr(a, 'name', None)])
+    except Exception:
+        artists = "Артист"
+        
     title = track.title or "Без названия"
     duration = int(track.duration_ms / 1000) if getattr(track, 'duration_ms', None) else 0
-    artist_id = track.artists[0].id if getattr(track, 'artists', None) and len(track.artists) > 0 else None
-    album_id = track.albums[0].id if getattr(track, 'albums', None) and len(track.albums) > 0 else None
+    
+    artist_id = str(track.artists[0].id) if getattr(track, 'artists', None) and len(track.artists) > 0 else None
+    album_id = str(track.albums[0].id) if getattr(track, 'albums', None) and len(track.albums) > 0 else None
 
     mp3_path = os.path.join(output_dir, f"ym_{track_id}.mp3")
     cover_raw_path = os.path.join(output_dir, f"ym_{track_id}_raw.jpg")
@@ -288,7 +328,7 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     }
 
 def search_sc_sync(query: str, limit: int = 15):
-    # Для SC оставляем фонетику, так как его поиск слабее
+    # В SC оставляем транслит-фонетику, так как поиск там ограниченный
     queries = get_search_queries(query)
     search_opts = {
         'format': 'bestaudio/best',
