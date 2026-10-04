@@ -88,7 +88,7 @@ async def start_handler(message: types.Message):
         "👋 <b>Привет! Это NoMusic.</b>\n\n"
         "Сервис предназначен для поиска и загрузки аудиозаписей.\n\n"
         "<blockquote>💡 <i>Чтобы найти трек, отправь его название или ссылку. "
-        "Для поиска всей дискографии артиста нажми «🎙 Поиск артиста».</i></blockquote>"
+        "Для поиска дискографии исполнителя нажми «🎙 Поиск артиста».</i></blockquote>"
     )
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
     await message.answer("🎛 <b>Навигация и управление:</b>", reply_markup=inline_kb, parse_mode="HTML")
@@ -97,11 +97,13 @@ async def start_handler(message: types.Message):
 @dp.message(F.text == "🎙 Поиск артиста")
 async def artist_search_start(message: types.Message):
     user_id = message.from_user.id
+    user = database.get_user(user_id)
+    mode_label = "официальных площадок" if user['search_mode'] == 'official' else "SoundCloud"
     USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "artist"
     await message.answer(
         "🎙 <b>Поиск по артисту</b>\n\n"
-        "Отправь имя исполнителя (например: <code>MACAN</code>, <code>CUPSIZE</code>, <code>Miyagi</code>).\n"
-        "Я выгружу его дискографию с сортировкой по популярности.",
+        f"Отправь имя исполнителя (например: <code>MACAN</code>, <code>CUPSIZE</code>, <code>Серёга Пират</code>).\n"
+        f"Я выгружу его дискографию с <b>{mode_label}</b> с сортировкой по популярности.",
         parse_mode="HTML"
     )
 
@@ -156,9 +158,11 @@ async def menu_search(callback: CallbackQuery):
 @dp.callback_query(F.data == "menu:artist_search")
 async def menu_artist_search(callback: CallbackQuery):
     user_id = callback.from_user.id
+    user = database.get_user(user_id)
+    mode_label = "официальных площадок" if user['search_mode'] == 'official' else "SoundCloud"
     USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "artist"
     await callback.message.answer(
-        "🎙 <b>Поиск по артисту:</b>\nОтправь имя исполнителя для выгрузки дискографии.",
+        f"🎙 <b>Поиск по артисту:</b>\nОтправь имя исполнителя для выгрузки дискографии ({mode_label}).",
         parse_mode="HTML"
     )
     await callback.answer()
@@ -232,8 +236,6 @@ async def toggle_fav_callback(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(**kb_dict))
     await callback.answer("Избранное обновлено!")
 
-# --- Логика построения меню результатов ---
-
 def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     session = USER_SESSIONS.get(user_id, {})
     results = session.get("results", [])
@@ -276,7 +278,12 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     if nav_row:
         buttons.append(nav_row)
 
-    if not is_discography:
+    if is_discography:
+        if search_mode == "official":
+            buttons.append([InlineKeyboardButton(text="☁️ Искать артиста в SoundCloud", callback_data="switch_artist:remix")])
+        else:
+            buttons.append([InlineKeyboardButton(text="🎵 Искать на оф. площадках", callback_data="switch_artist:official")])
+    else:
         if search_mode == "official":
             buttons.append([InlineKeyboardButton(text="☁️ Искать в SoundCloud", callback_data="switch:remix")])
         else:
@@ -290,7 +297,15 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         results = await search_tracks(query, mode=user_mode, limit=15)
 
         if not results:
-            await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос.")
+            mode_lbl = "на официальных площадках" if user_mode == "official" else "в SoundCloud"
+            switch_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="☁️ Попробовать в SoundCloud" if user_mode == "official" else "🎵 Попробовать на оф. площадках",
+                    callback_data="switch:remix" if user_mode == "official" else "switch:official"
+                )
+            ]])
+            USER_SESSIONS[user_id] = {"query": query, "mode": user_mode}
+            await status_msg.edit_text(f"Ничего не нашлось {mode_lbl}. Попробуй изменить запрос или сменить источник:", reply_markup=switch_kb)
             return
 
         USER_SESSIONS[user_id] = {
@@ -304,28 +319,38 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         }
 
         kb = build_search_keyboard(user_id, page=0)
-        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️️ Ремиксы (SoundCloud)"
+        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
         await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
 
-async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_query: str):
-    status_msg = await bot.send_message(chat_id, "🎙 <i>Ищу артиста и формирую дискографию...</i>", parse_mode="HTML")
+async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_query: str, user_mode: str = "official"):
+    mode_name = "официальных площадок" if user_mode == "official" else "SoundCloud"
+    status_msg = await bot.send_message(chat_id, f"🎙 <i>Формирую дискографию с {mode_name}...</i>", parse_mode="HTML")
     try:
-        results = await search_artist_discography(artist_query, limit=50)
+        results = await search_artist_discography(artist_query, mode=user_mode, limit=50)
 
         if not results:
-            await status_msg.edit_text(f"Исполнитель «{artist_query}» не найден ни на одной из площадок 😔")
+            switch_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="☁️ Искать в SoundCloud" if user_mode == "official" else "🎵 Искать на оф. площадках",
+                    callback_data="switch_artist:remix" if user_mode == "official" else "switch_artist:official"
+                )
+            ]])
+            USER_SESSIONS[user_id] = {"query": artist_query, "mode": user_mode}
+            await status_msg.edit_text(
+                f"Исполнитель «{artist_query}» не найден {('на официальных площадках' if user_mode == 'official' else 'в SoundCloud')} 😔",
+                reply_markup=switch_kb
+            )
             return
 
         first_track = results[0]
         artist_display_name = first_track.get('artist_display_name') or first_track.get('uploader') or artist_query
-        source = first_track.get('source', 'official')
-        source_label = "🎵 Официальные релизы" if source == 'official' else "☁️ SoundCloud"
+        source_label = "🎵 Официальные релизы" if user_mode == 'official' else "☁️ SoundCloud"
 
         USER_SESSIONS[user_id] = {
             "query": artist_query,
-            "mode": "official" if source == 'official' else "remix",
+            "mode": user_mode,
             "results": results,
             "items": {},
             "current_page": 0,
@@ -354,18 +379,16 @@ async def handle_url(message: types.Message):
 async def handle_text_messages(message: types.Message):
     user_id = message.from_user.id
     text = message.text.strip()
+    user = database.get_user(user_id, message.from_user.username or message.from_user.first_name)
+    mode = user['search_mode']
     
     session = USER_SESSIONS.get(user_id, {})
     if session.get("awaiting") == "artist":
         session["awaiting"] = None
-        await perform_artist_search_and_send(message.chat.id, user_id, text)
+        await perform_artist_search_and_send(message.chat.id, user_id, text, user_mode=mode)
         return
 
-    user = database.get_user(user_id, message.from_user.username or message.from_user.first_name)
-    mode = user['search_mode']
     await perform_search_and_send(message.chat.id, user_id, text, mode)
-
-# --- Обработка клика по треку ---
 
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
@@ -468,8 +491,6 @@ async def callback_dl_db(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
-# --- Навигация по альбомам и артистам ---
-
 @dp.callback_query(F.data.startswith("album:"))
 async def callback_album(callback: CallbackQuery):
     album_id = callback.data.split(":")[1]
@@ -541,6 +562,20 @@ async def callback_switch_source(callback: CallbackQuery):
     await callback.message.delete()
     await perform_search_and_send(callback.message.chat.id, user_id, query, target_mode)
 
+@dp.callback_query(F.data.startswith("switch_artist:"))
+async def callback_switch_artist_source(callback: CallbackQuery):
+    target_mode = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+    session = USER_SESSIONS.get(user_id, {})
+    query = session.get("query")
+    
+    if not query:
+        await callback.answer("Сессия устарела. Отправьте запрос заново.", show_alert=True)
+        return
+
+    await callback.message.delete()
+    await perform_artist_search_and_send(callback.message.chat.id, user_id, query, user_mode=target_mode)
+
 @dp.callback_query(F.data.startswith("page:"))
 async def callback_pagination(callback: CallbackQuery):
     page = int(callback.data.split("page:")[1])
@@ -553,8 +588,6 @@ async def callback_pagination(callback: CallbackQuery):
 @dp.callback_query(F.data == "noop")
 async def callback_noop(callback: CallbackQuery):
     await callback.answer()
-
-# --- Отправка аудиофайлов ---
 
 async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message, 
                                artist_id: str = None, album_id: str = None):
@@ -623,8 +656,6 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             except Exception:
                 pass
 
-# --- Инлайн режим ---
-
 @dp.inline_query()
 async def inline_search_handler(inline_query: InlineQuery):
     query = inline_query.query.strip()
@@ -677,8 +708,6 @@ async def inline_search_handler(inline_query: InlineQuery):
     except Exception as e:
         print(f"❌ [INLINE LOCAL DB ERROR]: {e}")
         await inline_query.answer([], cache_time=2, is_personal=True)
-
-# --- Сервер и запуск ---
 
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
