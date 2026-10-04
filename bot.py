@@ -26,7 +26,8 @@ from downloader import (
     download_track, 
     search_tracks, 
     search_artist_discography,
-    get_am_album_tracks
+    get_am_album_tracks,
+    get_ym_client
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -39,6 +40,19 @@ dp = Dispatcher()
 
 USER_SESSIONS = {}
 LONG_TRACK_THRESHOLD = 240
+
+def parse_admin_ids() -> set:
+    raw = os.getenv("ADMIN_IDS") or os.getenv("ADMIN_ID") or ""
+    admins = set()
+    for item in str(raw).replace(" ", "").split(","):
+        if item.isdigit():
+            admins.add(int(item))
+    return admins
+
+ADMIN_IDS = parse_admin_ids()
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
 def format_duration(seconds) -> str:
     try:
@@ -63,12 +77,17 @@ def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     user = database.get_user(user_id)
     mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
     
-    return InlineKeyboardMarkup(inline_keyboard=[
+    keyboard = [
         [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
          InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
         [InlineKeyboardButton(text="👤 Мой кабинет", callback_data="menu:profile")],
         [InlineKeyboardButton(text=f"🎧 Режим: {mode_text}", callback_data="menu:toggle_mode")]
-    ])
+    ]
+
+    if is_admin(user_id):
+        keyboard.append([InlineKeyboardButton(text="⚡️ Панель администратора", callback_data="admin:menu")])
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_profile_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -76,6 +95,155 @@ def get_profile_menu() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="📜 История", callback_data="menu:history")],
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
     ])
+
+def get_admin_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Аналитика и статистика", callback_data="admin:stats")],
+        [InlineKeyboardButton(text="📢 Рассылка сообщений", callback_data="admin:broadcast_prompt")],
+        [InlineKeyboardButton(text="🩺 Диагностика системы", callback_data="admin:diag")],
+        [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
+    ])
+
+@dp.message(Command("admin"))
+async def admin_command_handler(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔️ У вас нет прав доступа к панели управления.")
+        return
+    await message.answer("⚡️ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
+
+@dp.callback_query(F.data == "admin:menu")
+async def admin_menu_callback(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Доступ ограничен!", show_alert=True)
+        return
+    await callback.message.edit_text("⚡️ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin:stats")
+async def admin_stats_callback(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Доступ ограничен!", show_alert=True)
+        return
+    
+    stats = database.get_admin_stats()
+    
+    top_str = ""
+    if stats['top_tracks']:
+        top_str = "\n".join([f"  {idx}. <b>{art} — {tit}</b> ({cnt} скач.)" for idx, (art, tit, cnt) in enumerate(stats['top_tracks'], 1)])
+    else:
+        top_str = "  <i>Пока нет данных</i>"
+
+    text = (
+        "📊 <b>Статистика сервиса NoMusic:</b>\n\n"
+        f"👥 Всего пользователей: <b>{stats['total_users']}</b>\n"
+        f"📥 Скачиваний треков: <b>{stats['total_downloads']}</b>\n"
+        f"⚡️ Закэшировано в Telegram: <b>{stats['cached_tracks']}</b>\n"
+        f"❤️ Добавлено в избранное: <b>{stats['total_favorites']}</b>\n\n"
+        f"🔥 <b>Топ-5 скачиваемых треков:</b>\n{top_str}"
+    )
+
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:stats")],
+        [InlineKeyboardButton(text="🔙 Назад в админку", callback_data="admin:menu")]
+    ])
+    await callback.message.edit_text(text, reply_markup=back_kb, parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin:diag")
+async def admin_diag_callback(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Доступ ограничен!", show_alert=True)
+        return
+
+    ym_token_present = bool(os.getenv("YANDEX_MUSIC_TOKEN") or os.getenv("YANDEX_TOKEN"))
+    client = await get_ym_client()
+    ym_status = "🟢 Авторизован и активен" if client else "🔴 Ошибка авторизации / недоступен"
+    
+    token_badge = "✅ Задан в Environment" if ym_token_present else "❌ Не обнаружен"
+
+    text = (
+        "🩺 <b>Диагностика состояния бота:</b>\n\n"
+        f"🔑 Токен официального стрима: <b>{token_badge}</b>\n"
+        f"🎵 Статус аудио-клиента: <b>{ym_status}</b>\n"
+        f"🌍 Apple Music Каталог: <b>🟢 Storefront (RU) активен</b>\n"
+        f"⚡️ Инлайн кэширование: <b>🟢 Работает по file_id</b>\n"
+        f"👑 ID администраторов: <code>{', '.join(map(str, ADMIN_IDS)) or 'Не заданы'}</code>"
+    )
+
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Проверить заново", callback_data="admin:diag")],
+        [InlineKeyboardButton(text="🔙 Назад в админку", callback_data="admin:menu")]
+    ])
+    await callback.message.edit_text(text, reply_markup=back_kb, parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin:broadcast_prompt")
+async def admin_broadcast_prompt(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Доступ ограничен!", show_alert=True)
+        return
+    
+    USER_SESSIONS.setdefault(callback.from_user.id, {})["awaiting"] = "broadcast_input"
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="admin:menu")]
+    ])
+    await callback.message.edit_text(
+        "📢 <b>Рассылка сообщений пользователям</b>\n\n"
+        "Отправьте следующим сообщением текст (с поддержкой форматирования HTML или ссылками), "
+        "который будет разослан всем пользователям бота.",
+        reply_markup=cancel_kb,
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin:broadcast_confirm")
+async def admin_broadcast_confirm(callback: CallbackQuery):
+    admin_id = callback.from_user.id
+    if not is_admin(admin_id):
+        await callback.answer("Доступ ограничен!", show_alert=True)
+        return
+
+    broadcast_data = USER_SESSIONS.get(admin_id, {}).get("broadcast_draft")
+    if not broadcast_data:
+        await callback.answer("Сообщение для рассылки не найдено.", show_alert=True)
+        return
+
+    USER_SESSIONS[admin_id]["broadcast_draft"] = None
+    await callback.message.edit_text("⏳ <i>Рассылка запущена... Пожалуйста, подождите.</i>", parse_mode="HTML")
+    
+    user_ids = database.get_all_user_ids()
+    total_users = len(user_ids)
+    success = 0
+    blocked = 0
+
+    for uid in user_ids:
+        try:
+            await bot.send_message(uid, broadcast_data, parse_mode="HTML", disable_web_page_preview=True)
+            success += 1
+            await asyncio.sleep(0.04)
+        except Exception:
+            blocked += 1
+
+    report_text = (
+        "✅ <b>Рассылка успешно завершена!</b>\n\n"
+        f"📊 Всего получателей в базе: <b>{total_users}</b>\n"
+        f"🟢 Доставлено сообщений: <b>{success}</b>\n"
+        f"🔴 Заблокировали бота / сбои: <b>{blocked}</b>"
+    )
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В админку", callback_data="admin:menu")]
+    ])
+    await callback.message.answer(report_text, reply_markup=back_kb, parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(F.data == "admin:broadcast_cancel")
+async def admin_broadcast_cancel(callback: CallbackQuery):
+    admin_id = callback.from_user.id
+    if admin_id in USER_SESSIONS:
+        USER_SESSIONS[admin_id]["broadcast_draft"] = None
+        USER_SESSIONS[admin_id]["awaiting"] = None
+    await callback.message.edit_text("❌ Рассылка отменена.", reply_markup=get_admin_menu())
+    await callback.answer()
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
@@ -384,6 +552,23 @@ async def handle_text_messages(message: types.Message):
     mode = user['search_mode']
     
     session = USER_SESSIONS.get(user_id, {})
+
+    if is_admin(user_id) and session.get("awaiting") == "broadcast_input":
+        session["awaiting"] = None
+        session["broadcast_draft"] = text
+
+        confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Запустить рассылку", callback_data="admin:broadcast_confirm")],
+            [InlineKeyboardButton(text="❌ Отменить", callback_data="admin:broadcast_cancel")]
+        ])
+        preview_text = (
+            "📢 <b>Предпросмотр сообщения для рассылки:</b>\n\n"
+            f"{text}\n\n"
+            "<blockquote>Подтвердите отправку всем пользователям бота.</blockquote>"
+        )
+        await message.answer(preview_text, reply_markup=confirm_kb, parse_mode="HTML")
+        return
+
     if session.get("awaiting") == "artist":
         session["awaiting"] = None
         await perform_artist_search_and_send(message.chat.id, user_id, text, user_mode=mode)
@@ -730,6 +915,7 @@ async def set_bot_commands():
     commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="artist", description="Поиск дискографии артиста"),
+        BotCommand(command="admin", description="Панель управления"),
     ]
     await bot.set_my_commands(commands)
 
