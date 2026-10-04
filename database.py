@@ -132,7 +132,6 @@ def get_cached_file_id(track_id: str) -> str:
     conn.close()
     return row[0] if row else None
 
-# Карта сопоставления артистов для инлайн-поиска
 ARTIST_ALIASES = {
     'макан': 'MACAN',
     'macan': 'MACAN',
@@ -167,7 +166,9 @@ ARTIST_ALIASES = {
     'капсайз': 'CUPSIZE',
     'cupsize': 'CUPSIZE',
     'плм': 'ПОЛМАТЕРИ',
-    'полматери': 'ПОЛМАТЕРИ'
+    'полматери': 'ПОЛМАТЕРИ',
+    'серега пират': 'Серёга Пират',
+    'серёга пират': 'Серёга Пират'
 }
 
 def search_cached_tracks(query: str, limit: int = 15):
