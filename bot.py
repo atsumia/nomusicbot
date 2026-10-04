@@ -350,7 +350,7 @@ async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_quer
         source_label = "🎵 Официальные релизы" if user_mode == 'official' else "☁️ SoundCloud"
 
         USER_SESSIONS[user_id] = {
-            "query": artist_query,
+            "query": artist_display_name,
             "mode": user_mode,
             "results": results,
             "items": {},
@@ -505,8 +505,10 @@ async def callback_album(callback: CallbackQuery):
         await status_msg.edit_text("Не удалось загрузить треки альбома 🥲")
         return
 
+    album_title = tracks[0].get('album_title') or 'Альбом'
+
     USER_SESSIONS[user_id] = {
-        "query": f"Альбом {album_id}",
+        "query": album_title,
         "mode": "official",
         "results": tracks,
         "items": {},
@@ -514,7 +516,6 @@ async def callback_album(callback: CallbackQuery):
         "is_discography": True
     }
     
-    album_title = tracks[0].get('album_title') or 'Альбом'
     kb = build_search_keyboard(user_id, page=0)
     await status_msg.edit_text(f"💿 <b>Альбом:</b> {album_title}\nТреков: <b>{len(tracks)}</b>", reply_markup=kb, parse_mode="HTML")
 
@@ -531,8 +532,10 @@ async def callback_artist_top(callback: CallbackQuery):
         await status_msg.edit_text("Не удалось загрузить дискографию артиста 🥲")
         return
 
+    artist_name = tracks[0].get('artist_display_name') or tracks[0].get('uploader') or 'Артист'
+
     USER_SESSIONS[user_id] = {
-        "query": f"Артист {artist_id}",
+        "query": artist_name,
         "mode": "official",
         "results": tracks,
         "items": {},
@@ -540,10 +543,9 @@ async def callback_artist_top(callback: CallbackQuery):
         "is_discography": True
     }
     
-    artist_name = tracks[0].get('artist_display_name') or tracks[0].get('uploader') or 'Артист'
     kb = build_search_keyboard(user_id, page=0)
     card_text = (
-        f"👤 <b>Артист:</b> {artist_name}\n"
+        f"👤 <b>Дискография:</b> {artist_name}\n"
         f"📊 Всего треков: <b>{len(tracks)}</b>\n"
         "<blockquote>🔥 Отсортировано по популярности</blockquote>"
     )
