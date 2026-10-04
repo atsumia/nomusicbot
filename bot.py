@@ -25,7 +25,6 @@ from downloader import (
     get_ym_album_tracks, 
     get_ym_artist_top
 )
-from visualizer import generate_apple_card
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -37,7 +36,6 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 USER_SESSIONS = {}
-
 LONG_TRACK_THRESHOLD = 240
 
 def format_duration(seconds) -> str:
@@ -281,7 +279,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         if fallback_triggered:
             text = "⚠️ <b>В Яндекс.Музыке трек не найден.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
         else:
-            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
+            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️️ Ремиксы (SoundCloud)"
             text = f"Результаты: <b>{mode_title}</b>"
 
         await status_msg.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -321,7 +319,7 @@ async def callback_switch_source(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("album:"))
 async def callback_album(callback: CallbackQuery):
-    album_id = int(callback.data.split(":")[1])
+    album_id = callback.data.split(":")[1]
     user_id = callback.from_user.id
     
     await callback.message.edit_text("⏳ Загружаю треклист альбома...")
@@ -345,7 +343,7 @@ async def callback_album(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("artist_top:"))
 async def callback_artist_top(callback: CallbackQuery):
-    artist_id = int(callback.data.split(":")[1])
+    artist_id = callback.data.split(":")[1]
     user_id = callback.from_user.id
     
     await callback.message.edit_text("⏳ Загружаю топ артиста...")
@@ -411,7 +409,6 @@ async def callback_download(callback: CallbackQuery):
     await callback.answer()
     status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
     
-    # Передаем album_id и artist_id из сессии поиска напрямую в отправку
     await process_and_send_audio(
         callback.message.chat.id, 
         user_id, 
@@ -503,20 +500,20 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         kb_buttons = []
         smart_row = []
         
-        # Гарантированное добавление кнопок Альбома и Артиста под трек
-        a_id = artist_id or track.get('artist_id')
-        al_id = album_id or track.get('album_id')
+        # Гарантированное добавление кнопок Альбома и Артиста к сообщению с треком
+        a_id = artist_id if artist_id else track.get('artist_id')
+        al_id = album_id if album_id else track.get('album_id')
 
-        if al_id:
+        if al_id and str(al_id) != "None":
             smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{al_id}"))
-        if a_id:
+        if a_id and str(a_id) != "None":
             smart_row.append(InlineKeyboardButton(text="👤 Топ артиста", callback_data=f"artist_top:{a_id}"))
             
         if smart_row:
             kb_buttons.append(smart_row)
 
         is_fav = database.is_favorite(user_id, track_id)
-        fav_text = "❤️ В избранном" if is_fav else "🤍 В избранное"
+        fav_text = "❤️️ В избранном" if is_fav else "🤍 В избранное"
         kb_buttons.append([InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")])
 
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
