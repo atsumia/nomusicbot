@@ -2,7 +2,7 @@ import os
 import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 from aiogram.types import (
     FSInputFile,
     InlineKeyboardMarkup,
@@ -29,6 +29,14 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 USER_SESSIONS = {}
+
+# Лимит в секундах, после которого трек считается подозрительно долгим (4 минуты)
+LONG_TRACK_THRESHOLD = 240
+
+def format_duration(seconds: int) -> str:
+    m = seconds // 60
+    s = seconds % 60
+    return f"{m}:{s:02d}"
 
 # --- Постоянная нижняя клавиатура (Reply Keyboard) ---
 
@@ -69,20 +77,16 @@ async def start_handler(message: types.Message):
     database.get_user(message.from_user.id, username)
     
     reply_kb = get_bottom_reply_keyboard(message.from_user.id)
+    inline_kb = get_main_menu(message.from_user.id)
     
-    await message.answer(
-        "👋 **Добро пожаловать в NoMusic!**\n\n"
-        "Я помогу найти и скачать треки в высоком качестве.\n"
-        "Используй кнопки внизу или выбери действие в меню:",
-        reply_markup=reply_kb,
-        parse_mode="Markdown"
+    welcome_text = (
+        "👋 <b>Привет! Это NoMusic.</b>\n\n"
+        "Сервис предназначен для поиска и загрузки аудиозаписей в качестве до <b>320 kbps</b>.\n\n"
+        "<blockquote>💡 <i>Чтобы найти трек, просто отправь его название, имя артиста или ссылку на композицию.</i></blockquote>"
     )
+    await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
     
-    # Дублируем инлайн-карточку приветствия
-    await message.answer(
-        "⚡️ **Панель управления:**",
-        reply_markup=get_main_menu(message.from_user.id)
-    )
+    await message.answer("🎛 <b>Навигация и управление:</b>", reply_markup=inline_kb, parse_mode="HTML")
 
 # --- Обработка нажатий на нижние кнопки Reply-клавиатуры ---
 
@@ -96,15 +100,17 @@ async def reply_profile_handler(message: types.Message):
     username = message.from_user.username or message.from_user.first_name
     user = database.get_user(user_id, username)
     
-    mode_name = "🏛 Официальные релизы" if user['search_mode'] == "official" else "🎧 Ремиксы (SoundCloud)"
+    mode_name = "Официальные площадки" if user['search_mode'] == "official" else "SoundCloud (Ремиксы)"
     
-    text = (
-        f"👤 **Кабинет пользователя {username}**\n\n"
-        f"⬇️ **Скачано треков:** {user['download_count']}\n"
-        f"🔎 **Предпочитаемый поиск:** {mode_name}\n\n"
-        f"_Здесь ты можешь посмотреть историю загрузок и сохраненные треки._"
+    profile_text = (
+        f"👤 <b>Профиль:</b> @{username}\n"
+        f"🆔 <code>{user_id}</code>\n\n"
+        f"📊 <b>Статистика:</b>\n"
+        f"• Загружено треков: <b>{user['download_count']}</b>\n"
+        f"• Активный источник: <b>{mode_name}</b>\n\n"
+        "<blockquote>Используй кнопки ниже для доступа к медиатеке.</blockquote>"
     )
-    await message.answer(text, reply_markup=get_profile_menu(), parse_mode="Markdown")
+    await message.answer(profile_text, reply_markup=get_profile_menu(), parse_mode="HTML")
 
 @dp.message(F.text.startswith("🎧 Режим:"))
 async def reply_toggle_mode_handler(message: types.Message):
@@ -117,9 +123,9 @@ async def reply_toggle_mode_handler(message: types.Message):
     
     mode_name = "Официальные релизы" if new_mode == "official" else "SoundCloud"
     await message.answer(
-        f"✅ Режим поиска переключен на: **{mode_name}**",
+        f"✅ Режим поиска переключен на: <b>{mode_name}</b>",
         reply_markup=reply_kb,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 # --- Инлайн-навигация ---
@@ -127,9 +133,9 @@ async def reply_toggle_mode_handler(message: types.Message):
 @dp.callback_query(F.data == "menu:main")
 async def show_main_menu(callback: CallbackQuery):
     await callback.message.edit_text(
-        "👋 **Главное меню NoMusic**\n\nВыбери действие:",
+        "🎛 <b>Навигация и управление:</b>",
         reply_markup=get_main_menu(callback.from_user.id),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
     await callback.answer()
 
@@ -156,16 +162,17 @@ async def show_profile(callback: CallbackQuery):
     username = callback.from_user.username or callback.from_user.first_name
     user = database.get_user(user_id, username)
     
-    mode_name = "🏛 Официальные релизы" if user['search_mode'] == "official" else "🎧 Ремиксы (SoundCloud)"
+    mode_name = "Официальные площадки" if user['search_mode'] == "official" else "SoundCloud (Ремиксы)"
     
-    text = (
-        f"👤 **Кабинет пользователя {username}**\n\n"
-        f"⬇️ **Скачано треков:** {user['download_count']}\n"
-        f"🔎 **Предпочитаемый поиск:** {mode_name}\n\n"
-        f"_Здесь ты можешь посмотреть историю загрузок и сохраненные треки._"
+    profile_text = (
+        f"👤 <b>Профиль:</b> @{username}\n"
+        f"🆔 <code>{user_id}</code>\n\n"
+        f"📊 <b>Статистика:</b>\n"
+        f"• Загружено треков: <b>{user['download_count']}</b>\n"
+        f"• Активный источник: <b>{mode_name}</b>\n\n"
+        "<blockquote>Используй кнопки ниже для доступа к медиатеке.</blockquote>"
     )
-    
-    await callback.message.edit_text(text, reply_markup=get_profile_menu(), parse_mode="Markdown")
+    await callback.message.edit_text(profile_text, reply_markup=get_profile_menu(), parse_mode="HTML")
     await callback.answer()
 
 @dp.callback_query(F.data == "menu:history")
@@ -182,9 +189,9 @@ async def show_history(callback: CallbackQuery):
         
     buttons.append([InlineKeyboardButton(text="🔙 Назад в кабинет", callback_data="menu:profile")])
     await callback.message.edit_text(
-        "📜 **Последние скачанные треки:**\n_Нажми на любой трек, чтобы скачать его снова_", 
+        "📜 <b>Последние скачанные треки:</b>\n<i>Нажми на любой трек, чтобы скачать его снова</i>", 
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
     await callback.answer()
 
@@ -202,9 +209,9 @@ async def show_favorites(callback: CallbackQuery):
         
     buttons.append([InlineKeyboardButton(text="🔙 Назад в кабинет", callback_data="menu:profile")])
     await callback.message.edit_text(
-        "❤️ **Твое избранное:**\n_Нажми на трек для скачивания_", 
+        "❤️ <b>Твое избранное:</b>\n<i>Нажми на трек для скачивания</i>", 
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
     await callback.answer()
 
@@ -225,7 +232,7 @@ async def toggle_fav_callback(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=kb)
     await callback.answer("Избранное обновлено!")
 
-# --- Логика Поиска и Клавиатур ---
+# --- Логика Поиска и Клавиатур с пометкой длинных треков ---
 
 def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     session = USER_SESSIONS.get(user_id, {})
@@ -244,9 +251,20 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         short_id = f"{user_id}_{item['id']}"[:50]
         session.setdefault("items", {})[short_id] = item 
         
-        btn_text = f"{idx}. {item['uploader']} - {item['title']}"
-        if len(btn_text) > 42:
-            btn_text = btn_text[:39] + "..."
+        duration = item.get('duration', 0)
+        dur_str = format_duration(duration) if duration > 0 else ""
+        
+        # Пометка для треков длиннее 4 минут
+        is_long = duration > LONG_TRACK_THRESHOLD
+        warn_badge = f" ⏳ {dur_str}" if is_long and dur_str else ""
+        
+        title_artist = f"{item['uploader']} - {item['title']}"
+        # Ограничиваем длину названия кнопки с учётом бейджа
+        max_title_len = 34 if is_long else 40
+        if len(title_artist) > max_title_len:
+            title_artist = title_artist[:max_title_len - 3] + "..."
+            
+        btn_text = f"{idx}. {title_artist}{warn_badge}"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl:{short_id}")])
 
     nav_row = []
@@ -330,7 +348,8 @@ async def handle_search(message: types.Message):
         USER_SESSIONS[user_id] = {
             "query": query,
             "results": tracks_list,
-            "items": {}
+            "items": {},
+            "current_page": 0
         }
 
         kb = build_search_keyboard(user_id, page=0)
@@ -346,16 +365,16 @@ async def handle_search(message: types.Message):
                 )
                 photo = FSInputFile(image_path)
                 await message.answer_photo(
-                    photo=photo, caption=f"🎧 Результаты: **{mode_title}**",
-                    reply_markup=kb, parse_mode="Markdown"
+                    photo=photo, caption=f"🎧 Результаты: <b>{mode_title}</b>",
+                    reply_markup=kb, parse_mode="HTML"
                 )
                 await status_msg.delete()
                 if os.path.exists(image_path):
                     os.remove(image_path)
             except Exception:
-                await status_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
+                await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
         else:
-            await status_msg.edit_text(f"Результаты: **{mode_title}**", reply_markup=kb, parse_mode="Markdown")
+            await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
             
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
@@ -363,6 +382,8 @@ async def handle_search(message: types.Message):
 @dp.callback_query(F.data.startswith("page:"))
 async def callback_pagination(callback: CallbackQuery):
     page = int(callback.data.split("page:")[1])
+    if callback.from_user.id in USER_SESSIONS:
+        USER_SESSIONS[callback.from_user.id]["current_page"] = page
     kb = build_search_keyboard(callback.from_user.id, page=page)
     await callback.message.edit_reply_markup(reply_markup=kb)
     await callback.answer()
@@ -371,9 +392,50 @@ async def callback_pagination(callback: CallbackQuery):
 async def callback_noop(callback: CallbackQuery):
     await callback.answer()
 
+# --- Выбор трека и проверка на длительность ---
+
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
     short_id = callback.data.split("dl:")[1]
+    user_id = callback.from_user.id
+    
+    item = USER_SESSIONS.get(user_id, {}).get("items", {}).get(short_id)
+    if not item:
+        await callback.answer("Срок действия выбора истёк. Повтори поиск.", show_alert=True)
+        return
+
+    duration = item.get('duration', 0)
+
+    # Если трек длиннее 4 минут — выводим подтверждение
+    if duration > LONG_TRACK_THRESHOLD:
+        await callback.answer()
+        dur_text = format_duration(duration)
+        warn_text = (
+            f"⏳ <b>Внимание: длинная аудиозапись!</b>\n\n"
+            f"🎵 <b>{item['uploader']} — {item['title']}</b>\n"
+            f"⏱ Длительность: <b>{dur_text}</b>\n\n"
+            f"<blockquote>Этот трек длится больше 4 минут. Возможно, это полный альбом, микс или длинная live-версия. Скачать его?</blockquote>"
+        )
+        confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚡️ Да, скачать трек", callback_data=f"confirm_dl:{short_id}")],
+            [InlineKeyboardButton(text="🔙 Вернуться к списку", callback_data="back_to_results")]
+        ])
+        
+        if callback.message.caption:
+            await callback.message.edit_caption(caption=warn_text, reply_markup=confirm_kb, parse_mode="HTML")
+        else:
+            await callback.message.edit_text(text=warn_text, reply_markup=confirm_kb, parse_mode="HTML")
+        return
+
+    # Обычный трек скачивается сразу
+    await callback.answer()
+    status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
+    await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
+
+# Подтверждение загрузки длинного трека
+@dp.callback_query(F.data.startswith("confirm_dl:"))
+async def callback_confirm_download(callback: CallbackQuery):
+    short_id = callback.data.split("confirm_dl:")[1]
     user_id = callback.from_user.id
     
     item = USER_SESSIONS.get(user_id, {}).get("items", {}).get(short_id)
@@ -383,9 +445,39 @@ async def callback_download(callback: CallbackQuery):
         await callback.message.answer("Срок действия выбора истёк. Повтори поиск.")
         return
 
-    status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
+    # Возвращаем исходный вид карточки поиска
+    page = USER_SESSIONS.get(user_id, {}).get("current_page", 0)
+    kb = build_search_keyboard(user_id, page=page)
+    user = database.get_user(user_id)
+    mode_title = "Официальные релизы" if user['search_mode'] == "official" else "Ремиксы (SoundCloud)"
+    
+    try:
+        if callback.message.caption:
+            await callback.message.edit_caption(caption=f"🎧 Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
+        else:
+            await callback.message.edit_text(text=f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+    status_msg = await callback.message.answer("⏳ Загрузка подтвержденного трека...")
     await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
 
+# Возврат к списку при отмене
+@dp.callback_query(F.data == "back_to_results")
+async def callback_back_to_results(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    page = USER_SESSIONS.get(user_id, {}).get("current_page", 0)
+    kb = build_search_keyboard(user_id, page=page)
+    user = database.get_user(user_id)
+    mode_title = "Официальные релизы" if user['search_mode'] == "official" else "Ремиксы (SoundCloud)"
+
+    if callback.message.caption:
+        await callback.message.edit_caption(caption=f"🎧 Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
+    else:
+        await callback.message.edit_text(text=f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+# Скачивание прямо из Истории или Избранного
 @dp.callback_query(F.data.startswith("dl_db:"))
 async def callback_dl_db(callback: CallbackQuery):
     parts = callback.data.split(":")
