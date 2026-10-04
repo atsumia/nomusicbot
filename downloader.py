@@ -62,27 +62,49 @@ def get_search_queries(raw_query: str) -> list:
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
     tag_detected = None
+    # Более точные паттерны для выявления версий
     tag_patterns = [
-        (r'\b(slowed\s*\+\s*reverb|slowed\s*and\s*reverb)\b', 'slowed + reverb'),
+        (r'\b(slowed\s*(?:\+|&|and)\s*reverb)\b', 'slowed + reverb'),
         (r'\b(slowed)\b', 'slowed'),
         (r'\b(sped\s*up|speed\s*up)\b', 'sped up'),
         (r'\b(remix)\b', 'remix'),
         (r'\b(reverb)\b', 'reverb')
     ]
+    
     for pattern, label in tag_patterns:
         if re.search(pattern, raw_title, flags=re.IGNORECASE):
             tag_detected = label
             break
 
-    cleaned = raw_title
+    # Список мусора для удаления. Теперь удаляем и версии без скобок, чтобы не было дублей!
     trash = [
-        r'\[.*?\]', r'\(.*?official.*?\)', r'\(.*?audio.*?\)',
-        r'\(.*?prod\..*?\)', r'\(.*?slowed.*?\)', r'\(.*?sped up.*?\)',
-        r'\(.*?speed up.*?\)', r'\(.*?reverb.*?\)', r't\.me/\S+', r'vk\.com/\S+'
+        r'\[.*?\]', 
+        r'\(.*?official.*?\)', 
+        r'\(.*?audio.*?\)',
+        r'\(.*?prod\..*?\)', 
+        r'\(.*?(slowed|sped up|speed up|reverb|remix).*?\)', # Удаляем версию внутри скобок
+        r'\b(slowed\s*(?:\+|&|and)\s*reverb)\b',              # Удаляем сложный тег просто в тексте
+        r'\b(slowed|sped up|speed up|reverb|remix)\b',        # Удаляем простые теги просто в тексте
+        r't\.me/\S+', 
+        r'vk\.com/\S+'
     ]
-    for p in trash:
-        cleaned = re.sub(p, '', cleaned, flags=re.IGNORECASE)
 
+    temp_cleaned = raw_title
+    for p in trash:
+        temp_cleaned = re.sub(p, '', temp_cleaned, flags=re.IGNORECASE)
+
+    # Очищаем пустые скобки, лишние пробелы и тире, оставшиеся после вырезания слов
+    temp_cleaned = re.sub(r'\(\s*\)', '', temp_cleaned)
+    temp_cleaned = re.sub(r'\s+', ' ', temp_cleaned).strip()
+    temp_cleaned = re.sub(r'[-–—]\s*$', '', temp_cleaned).strip()
+
+    # Защита: если после очистки от тегов название стало полностью пустым, возвращаем оригинал
+    if temp_cleaned:
+        cleaned = temp_cleaned
+    else:
+        cleaned = raw_title
+
+    # Разбиваем на Исполнителя и Название
     parts = re.split(r'\s*[-–—]\s*', cleaned, maxsplit=1)
     if len(parts) == 2 and parts[0].strip() and parts[1].strip():
         base_artist = parts[0].strip()
@@ -91,16 +113,19 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
         base_artist = uploader.strip()
         base_title = cleaned.strip()
 
+    # Проверяем регистр первого буквенного символа в названии
     first_letter_match = re.search(r'[a-zA-Zа-яА-ЯёЁ]', base_title)
     is_lower = False
     if first_letter_match:
         is_lower = first_letter_match.group(0).islower()
 
+    # Формируем суффикс версии ровно 1 раз и в скобках
     tag_suffix = ""
     if tag_detected:
         if is_lower:
             formatted_tag = tag_detected.lower()
         else:
+            # Делаем заглавными каждое слово (например, Slowed + Reverb)
             formatted_tag = " + ".join([w.strip().capitalize() for w in tag_detected.split('+')])
         tag_suffix = f" ({formatted_tag})"
 
