@@ -358,3 +358,25 @@ def get_all_user_ids() -> list:
     rows = c.fetchall()
     conn.close()
     return [r[0] for r in rows if r[0]]
+
+def get_all_users_info() -> list:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute('''
+        SELECT u.user_id, u.username, u.created_at, COUNT(d.id) as dl_count
+        FROM users u
+        LEFT JOIN downloads d ON u.user_id = d.user_id
+        GROUP BY u.user_id
+        ORDER BY u.created_at DESC
+    ''')
+    rows = c.fetchall()
+    conn.close()
+    return [
+        {
+            'user_id': r[0],
+            'username': r[1],
+            'created_at': r[2],
+            'downloads': r[3]
+        }
+        for r in rows
+    ]
