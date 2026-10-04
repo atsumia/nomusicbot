@@ -208,7 +208,7 @@ async def show_favorites(callback: CallbackQuery):
     
     buttons = []
     for db_id, track_id, title, artist, url in records:
-        btn_text = f"❤️ {artist} - {title}"[:40]
+        btn_text = f"❤️️ {artist} - {title}"[:40]
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl_db:favorites:{db_id}")])
         
     buttons.append([InlineKeyboardButton(text="🔙 Назад в кабинет", callback_data="menu:profile")])
@@ -315,7 +315,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             reply_markup=kb
         )
 
-        # Сохраняем Telegram file_id для мгновенного инлайн-плеера
+        # Сохраняем Telegram file_id для мгновенного Инлайн плеера
         tg_fid = sent_msg.audio.file_id if sent_msg.audio else None
         database.add_download(user_id, track_id, track['title'], track['artist'], url, tg_fid)
 
@@ -504,7 +504,7 @@ async def callback_dl_db(callback: CallbackQuery):
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
 
-# --- ЧИСТЫЙ ИНЛАЙН РЕЖИМ (Только напрямую аудио, без ссылок) ---
+# --- ЧИСТЫЙ ИНЛАЙН РЕЖИМ (Исключительно АУДИО плеер в чате) ---
 
 @dp.inline_query()
 async def inline_search_handler(inline_query: InlineQuery):
@@ -518,8 +518,8 @@ async def inline_search_handler(inline_query: InlineQuery):
         user = database.get_user(inline_query.from_user.id)
         mode = user['search_mode']
         
-        # Получаем список треков (лимит 6, чтобы не было таймаута)
-        results = await search_tracks(query, mode=mode, limit=6)
+        # Получаем данные о треках (максимум 8)
+        results = await search_tracks(query, mode=mode, limit=8)
         if not results:
             await inline_query.answer([], cache_time=5, is_personal=True)
             return
@@ -530,13 +530,13 @@ async def inline_search_handler(inline_query: InlineQuery):
         valid_results = []
         uncached_tasks = []
 
-        # Инлайн-кнопка под отправленным треком
+        # Единая кнопка, которая будет прикреплена внизу к каждому отправленному аудиофайлу
         inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="🎧 Найти песню", switch_inline_query_current_chat="")
         ]])
 
-        # 1. Формируем список кэшированных треков, остальное ставим в очередь на получение URL
-        for idx, t in enumerate(tracks_list[:6]):
+        # 1. Сортируем: закэшированные файлы отдаём мгновенно, новые ставим в очередь на парсинг потока
+        for idx, t in enumerate(tracks_list[:8]):
             track_id = str(t['id'])
             cached_fid = database.get_cached_file_id(track_id)
 
@@ -549,13 +549,14 @@ async def inline_search_handler(inline_query: InlineQuery):
                     )
                 )
             else:
-                # Ограничиваем до 3 новых треков одновременно, чтобы уложиться в лимит Telegram (2 сек)
+                # Ограничиваем очередь 3 треками (ОЗУ 500 МБ) для избежания таймаута Telegram (>2 сек)
                 if len(uncached_tasks) < 3:
                     uncached_tasks.append((idx, t))
 
-        # 2. Асинхронно добываем потоки с жестким таймаутом
+        # 2. Быстро добываем прямые аудиоссылки для новых (не закэшированных) треков
         async def resolve_audio(idx, t):
             try:
+                # Ограничиваем время добычи ссылки (1.5 сек на каждый поток, идут параллельно)
                 stream_url = await asyncio.wait_for(get_direct_stream_url(t['url']), timeout=1.5)
                 if stream_url:
                     return InlineQueryResultAudio(
@@ -569,16 +570,18 @@ async def inline_search_handler(inline_query: InlineQuery):
             except asyncio.TimeoutError:
                 pass
             except Exception as e:
-                print(f"Inline stream error: {e}")
+                print(f"Inline stream generation error: {e}")
             return None
 
+        # Запускаем парсинг
         if uncached_tasks:
             resolved = await asyncio.gather(*(resolve_audio(idx, t) for idx, t in uncached_tasks))
             for r in resolved:
                 if r:
                     valid_results.append(r)
 
-        # Отправляем только те треки, которые стали реальным Аудио
+        # 3. Отправляем готовый список аудиозаписей в Telegram
+        # (Никаких текстовых Article, только прямые аудиофайлы)
         await inline_query.answer(valid_results, cache_time=10, is_personal=True)
 
     except Exception as e:
