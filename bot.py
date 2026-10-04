@@ -14,7 +14,7 @@ from aiogram.types import (
 )
 from dotenv import load_dotenv
 
-# Подключаем наши модули
+# Подключаем локальные модули
 import database
 from downloader import download_track, search_tracks
 from visualizer import generate_apple_card
@@ -33,9 +33,13 @@ USER_SESSIONS = {}
 # Лимит в секундах, после которого трек считается подозрительно долгим (4 минуты)
 LONG_TRACK_THRESHOLD = 240
 
-def format_duration(seconds: int) -> str:
-    m = seconds // 60
-    s = seconds % 60
+def format_duration(seconds) -> str:
+    try:
+        total_sec = int(float(seconds or 0))
+    except (ValueError, TypeError):
+        return ""
+    m = total_sec // 60
+    s = total_sec % 60
     return f"{m}:{s:02d}"
 
 # --- Постоянная нижняя клавиатура (Reply Keyboard) ---
@@ -85,7 +89,6 @@ async def start_handler(message: types.Message):
         "<blockquote>💡 <i>Чтобы найти трек, просто отправь его название, имя артиста или ссылку на композицию.</i></blockquote>"
     )
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
-    
     await message.answer("🎛 <b>Навигация и управление:</b>", reply_markup=inline_kb, parse_mode="HTML")
 
 # --- Обработка нажатий на нижние кнопки Reply-клавиатуры ---
@@ -121,7 +124,7 @@ async def reply_toggle_mode_handler(message: types.Message):
     database.set_mode(user_id, new_mode)
     reply_kb = get_bottom_reply_keyboard(user_id)
     
-    mode_name = "Официальные релизы" if new_mode == "official" else "SoundCloud"
+    mode_name = "Официальные площадки" if new_mode == "official" else "SoundCloud"
     await message.answer(
         f"✅ Режим поиска переключен на: <b>{mode_name}</b>",
         reply_markup=reply_kb,
@@ -153,7 +156,7 @@ async def menu_toggle_mode(callback: CallbackQuery):
     database.set_mode(user_id, new_mode)
     await callback.message.edit_reply_markup(reply_markup=get_main_menu(user_id))
     
-    mode_name = "Официальные релизы" if new_mode == "official" else "SoundCloud"
+    mode_name = "Официальные площадки" if new_mode == "official" else "SoundCloud"
     await callback.answer(f"✅ Режим изменен на: {mode_name}", show_alert=True)
 
 @dp.callback_query(F.data == "menu:profile")
@@ -232,7 +235,7 @@ async def toggle_fav_callback(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=kb)
     await callback.answer("Избранное обновлено!")
 
-# --- Логика Поиска и Клавиатур с пометкой длинных треков ---
+# --- Логика Поиска и Клавиатур ---
 
 def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     session = USER_SESSIONS.get(user_id, {})
@@ -251,15 +254,17 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         short_id = f"{user_id}_{item['id']}"[:50]
         session.setdefault("items", {})[short_id] = item 
         
-        duration = item.get('duration', 0)
+        raw_duration = item.get('duration', 0)
+        try:
+            duration = int(float(raw_duration or 0))
+        except (ValueError, TypeError):
+            duration = 0
+
         dur_str = format_duration(duration) if duration > 0 else ""
-        
-        # Пометка для треков длиннее 4 минут
         is_long = duration > LONG_TRACK_THRESHOLD
         warn_badge = f" ⏳ {dur_str}" if is_long and dur_str else ""
         
         title_artist = f"{item['uploader']} - {item['title']}"
-        # Ограничиваем длину названия кнопки с учётом бейджа
         max_title_len = 34 if is_long else 40
         if len(title_artist) > max_title_len:
             title_artist = title_artist[:max_title_len - 3] + "..."
@@ -404,9 +409,11 @@ async def callback_download(callback: CallbackQuery):
         await callback.answer("Срок действия выбора истёк. Повтори поиск.", show_alert=True)
         return
 
-    duration = item.get('duration', 0)
+    try:
+        duration = int(float(item.get('duration', 0) or 0))
+    except (ValueError, TypeError):
+        duration = 0
 
-    # Если трек длиннее 4 минут — выводим подтверждение
     if duration > LONG_TRACK_THRESHOLD:
         await callback.answer()
         dur_text = format_duration(duration)
@@ -427,7 +434,6 @@ async def callback_download(callback: CallbackQuery):
             await callback.message.edit_text(text=warn_text, reply_markup=confirm_kb, parse_mode="HTML")
         return
 
-    # Обычный трек скачивается сразу
     await callback.answer()
     status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
     await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
@@ -445,7 +451,6 @@ async def callback_confirm_download(callback: CallbackQuery):
         await callback.message.answer("Срок действия выбора истёк. Повтори поиск.")
         return
 
-    # Возвращаем исходный вид карточки поиска
     page = USER_SESSIONS.get(user_id, {}).get("current_page", 0)
     kb = build_search_keyboard(user_id, page=page)
     user = database.get_user(user_id)
@@ -495,7 +500,7 @@ async def callback_dl_db(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
-# --- WEB сервер и запуск ---
+# --- ВЕБ-сервер и запуск ---
 
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
