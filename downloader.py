@@ -352,13 +352,9 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
                 shazam_title = track_info.get('title', '')
                 shazam_artist = track_info.get('subtitle', '')
 
-                # Контекст оригинального трека с SoundCloud
                 orig_context = f"{raw_title} {raw_uploader} {final_title} {final_artist}".lower()
-                
-                # Извлекаем слова длиной от 3 символов из ответа Shazam
                 shazam_words = re.findall(r'[a-zA-Zа-яА-ЯёЁ0-9]{3,}', f"{shazam_title} {shazam_artist}".lower())
 
-                # Строгая проверка: совпадает ли хотя бы одно слово
                 has_match = any(w in orig_context for w in shazam_words) if shazam_words else False
 
                 if has_match:
@@ -431,6 +427,30 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'artist': final_artist,
         'duration': int(raw_info.get('duration', 0))
     }
+
+async def get_direct_stream_url(url: str) -> str:
+    """Получает прямую ссылку на audio-поток для работы Inline-режима Telegram"""
+    try:
+        if url.startswith("ym://"):
+            client = await get_ym_client()
+            track_id = url.replace("ym://", "")
+            tracks = await client.tracks([track_id])
+            if tracks:
+                info = await tracks[0].get_download_info_async()
+                mp3_info = [i for i in info if i.codec == 'mp3']
+                best = max(mp3_info, key=lambda x: x.bitrate_in_kbps) if mp3_info else info[0]
+                return await best.get_direct_link_async()
+        else:
+            loop = asyncio.get_event_loop()
+            def extract_sc_stream():
+                ydl_opts = {'format': 'bestaudio', 'quiet': True, 'no_warnings': True}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    data = ydl.extract_info(url, download=False)
+                    return data.get('url')
+            return await loop.run_in_executor(None, extract_sc_stream)
+    except Exception as e:
+        print(f"Error getting stream url: {e}")
+        return None
 
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     if mode == "official":
