@@ -28,6 +28,7 @@ from downloader import (
     download_track, 
     search_tracks, 
     search_artist_discography,
+    search_tracks_by_lyrics,
     get_am_album_tracks,
     get_ym_client
 )
@@ -71,7 +72,8 @@ def get_bottom_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     
     keyboard = [
         [KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="🎙 Поиск артиста")],
-        [KeyboardButton(text="👤 Мой кабинет"), KeyboardButton(text=f"🎧 {mode_label}")]
+        [KeyboardButton(text="📝 Поиск по тексту"), KeyboardButton(text=f"🎧 {mode_label}")],
+        [KeyboardButton(text="👤 Мой кабинет")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -82,6 +84,7 @@ def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
          InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
+        [InlineKeyboardButton(text="📝 Поиск по тексту песни", callback_data="menu:lyrics_search")],
         [InlineKeyboardButton(text="👤 Мой кабинет", callback_data="menu:profile")],
         [InlineKeyboardButton(text=f"🎧 Режим: {mode_text}", callback_data="menu:toggle_mode")]
     ]
@@ -111,7 +114,7 @@ def get_admin_menu() -> InlineKeyboardMarkup:
 async def admin_command_handler(message: types.Message):
     if not is_admin(message.from_user.id):
         return
-    await message.answer("⚡️️ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
+    await message.answer("⚡ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "admin:menu")
 async def admin_menu_callback(callback: CallbackQuery):
@@ -299,8 +302,8 @@ async def start_handler(message: types.Message):
     welcome_text = (
         "👋 <b>Привет! Это NoMusic.</b>\n\n"
         "Сервис предназначен для поиска и загрузки аудиозаписей.\n\n"
-        "<blockquote>💡 <i>Чтобы найти трек, отправь его название или ссылку. "
-        "Для поиска дискографии исполнителя нажми «🎙 Поиск артиста».</i></blockquote>"
+        "<blockquote>💡 <i>Чтобы найти трек, отправь его название, строчку из текста или ссылку. "
+        "Для дискографии нажми «🎙 Поиск артиста».</i></blockquote>"
     )
     await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
     await message.answer("🎛 <b>Навигация и управление:</b>", reply_markup=inline_kb, parse_mode="HTML")
@@ -316,6 +319,18 @@ async def artist_search_start(message: types.Message):
         "🎙 <b>Поиск по артисту</b>\n\n"
         f"Отправь имя исполнителя (например: <code>MACAN</code>, <code>CUPSIZE</code>, <code>Серёга Пират</code>).\n"
         f"Я выгружу его дискографию с <b>{mode_label}</b> с сортировкой по популярности.",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("lyrics"))
+@dp.message(F.text == "📝 Поиск по тексту")
+async def lyrics_search_start(message: types.Message):
+    user_id = message.from_user.id
+    USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "lyrics"
+    await message.answer(
+        "📝 <b>Поиск трека по тексту песни</b>\n\n"
+        "Отправь запомнившиеся слова или строчку из трека (например: <i>«я помню белые обои»</i> или <i>«засыпай на моих руках»</i>).\n"
+        "Я найду песню на официальных площадках по совпадению текста!",
         parse_mode="HTML"
     )
 
@@ -375,6 +390,18 @@ async def menu_artist_search(callback: CallbackQuery):
     USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "artist"
     await callback.message.answer(
         f"🎙 <b>Поиск по артисту:</b>\nОтправь имя исполнителя для выгрузки дискографии ({mode_label}).",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "menu:lyrics_search")
+async def menu_lyrics_search(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "lyrics"
+    await callback.message.answer(
+        "📝 <b>Поиск по тексту песни:</b>\n"
+        "Отправь запомнившиеся слова или строчку из трека.\n"
+        "Я найду песню на официальных площадках по тексту!",
         parse_mode="HTML"
     )
     await callback.answer()
@@ -536,6 +563,40 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
 
+async def perform_lyrics_search_and_send(chat_id: int, user_id: int, lyrics_query: str):
+    status_msg = await bot.send_message(chat_id, "📝 <i>Ищу трек по словам...</i>", parse_mode="HTML")
+    try:
+        results = await search_tracks_by_lyrics(lyrics_query, limit=15)
+
+        if not results:
+            await status_msg.edit_text(
+                f"По тексту «{lyrics_query}» ничего не найдено 😔\n\n"
+                "<blockquote>Попробуй отправить другую строчку или имя артиста с названием трека.</blockquote>",
+                parse_mode="HTML"
+            )
+            return
+
+        USER_SESSIONS[user_id] = {
+            "query": lyrics_query,
+            "mode": "official",
+            "results": results,
+            "items": {},
+            "current_page": 0,
+            "is_discography": False,
+            "awaiting": None
+        }
+
+        kb = build_search_keyboard(user_id, page=0)
+        header_text = (
+            f"📝 <b>Результаты поиска по тексту:</b>\n"
+            f"«<i>{lyrics_query}</i>»\n"
+            f"🎧 <b>Источник:</b> 🎵 Официальные релизы\n"
+            f"📊 Найдено совпадений: <b>{len(results)}</b>"
+        )
+        await status_msg.edit_text(header_text, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        await status_msg.edit_text(f"Ошибка поиска по тексту: {str(e)}")
+
 async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_query: str, user_mode: str = "official"):
     mode_name = "официальных площадок" if user_mode == "official" else "SoundCloud"
     status_msg = await bot.send_message(chat_id, f"🎙 <i>Формирую дискографию с {mode_name}...</i>", parse_mode="HTML")
@@ -615,6 +676,11 @@ async def handle_text_messages(message: types.Message):
     if session.get("awaiting") == "artist":
         session["awaiting"] = None
         await perform_artist_search_and_send(message.chat.id, user_id, text, user_mode=mode)
+        return
+
+    if session.get("awaiting") == "lyrics":
+        session["awaiting"] = None
+        await perform_lyrics_search_and_send(message.chat.id, user_id, text)
         return
 
     await perform_search_and_send(message.chat.id, user_id, text, mode)
@@ -955,17 +1021,17 @@ async def start_dummy_web_server():
     await site.start()
 
 async def set_bot_commands():
-    # 1. Базовые команды для всех пользователей (команда /admin здесь отсутствует)
     user_commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="artist", description="Поиск дискографии артиста"),
+        BotCommand(command="lyrics", description="Поиск трека по тексту"),
     ]
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
 
-    # 2. Персональный набор команд только для админов (включает /admin)
     admin_commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="artist", description="Поиск дискографии артиста"),
+        BotCommand(command="lyrics", description="Поиск трека по тексту"),
         BotCommand(command="admin", description="Панель управления"),
     ]
     for admin_id in ADMIN_IDS:
