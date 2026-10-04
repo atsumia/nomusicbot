@@ -1,7 +1,12 @@
 import sqlite3
 import os
 
-DB_NAME = "database.db"
+# Поддержка постоянных дисков (Persistent Disks) для Render
+DB_DIR = "/data"
+if os.path.exists(DB_DIR):
+    DB_NAME = os.path.join(DB_DIR, "database.db")
+else:
+    DB_NAME = "database.db"
 
 def get_connection():
     return sqlite3.connect(DB_NAME)
@@ -132,7 +137,6 @@ def get_cached_file_id(track_id: str) -> str:
     return row[0] if row else None
 
 def search_cached_tracks(query: str, limit: int = 15):
-    """Ищет треки только по локальной базе, которые уже имеют telegram_file_id"""
     conn = get_connection()
     c = conn.cursor()
     search_pattern = f"%{query}%"
