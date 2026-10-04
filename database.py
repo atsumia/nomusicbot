@@ -132,7 +132,7 @@ def get_cached_file_id(track_id: str) -> str:
     conn.close()
     return row[0] if row else None
 
-# --- Универсальный локальный словарь (синхронизирован с downloader.py) ---
+# Единая карта сопоставления артистов (синхронизирована с downloader.py)
 ARTIST_ALIASES = {
     'макан': 'MACAN',
     'macan': 'MACAN',
@@ -170,18 +170,9 @@ ARTIST_ALIASES = {
     'полматери': 'ПОЛМАТЕРИ'
 }
 
-def normalize_inline_query(query: str) -> str:
-    """Функция нормализации для мгновенного инлайн-поиска"""
-    if not query: return ""
-    query_lower = query.strip().lower()
-    if query_lower in ARTIST_ALIASES:
-        return ARTIST_ALIASES[query_lower].lower()
-    return query_lower
-
 def search_cached_tracks(query: str, limit: int = 15):
     conn = get_connection()
     c = conn.cursor()
-    # Вытягиваем все закэшированные треки
     c.execute('''
         SELECT track_id, title, artist, telegram_file_id 
         FROM downloads 
@@ -191,57 +182,57 @@ def search_cached_tracks(query: str, limit: int = 15):
     rows = c.fetchall()
     conn.close()
 
-    # 1. Оригинальный запрос пользователя (например, "капсайз маша")
     original_q = query.lower().strip()
-    
-    # 2. Нормализованный запрос (например, "cupsize маша")
-    # Если введено несколько слов, пытаемся перевести первое слово или использовать целиком
     normalized_q = original_q
-    first_word = original_q.split()[0] if original_q.split() else ""
     
-    if original_q in ARTIST_ALIASES:
-        normalized_q = ARTIST_ALIASES[original_q].lower()
-    elif first_word in ARTIST_ALIASES:
-        normalized_q = original_q.replace(first_word, ARTIST_ALIASES[first_word].lower(), 1)
+    # 1. Заменяем известные алиасы в строке поиска для инлайна
+    for key, val in ARTIST_ALIASES.items():
+        if key in original_q:
+            normalized_q = re.sub(r'(?i)\b' + re.escape(key) + r'\b', val.lower(), normalized_q)
 
-    # Разбиваем запросы на слова для гибкого поиска
-    search_words = set(re.findall(r'\b\w{3,}\b', normalized_q)).union(set(re.findall(r'\b\w{3,}\b', original_q)))
+    # 2. Разбиваем запросы на уникальные слова
+    words_orig = set(re.findall(r'\b\w{2,}\b', original_q))
+    words_norm = set(re.findall(r'\b\w{2,}\b', normalized_q))
     
-    if not search_words:
-        # Если слова слишком короткие, ищем прямым вхождением
-        search_words = {original_q, normalized_q}
-
     results = []
     
     for row in rows:
         track_id, title, artist, file_id = row
         t_low = (title or "").lower()
         a_low = (artist or "").lower()
-        combined_text = f"{t_low} {a_low}"
-
-        # Проверяем: если ВСЕ слова из нормализованного (или оригинального) запроса есть в названии/авторе
-        # Это обеспечивает высокую точность. Например: запрос "плм маша" -> "полматери маша". Оба слова должны быть в треке.
+        combined_text = f"{a_low} {t_low}"
         
-        match_normalized = all(word in combined_text for word in re.findall(r'\b\w{3,}\b', normalized_q)) if len(normalized_q)>2 else (normalized_q in combined_text)
-        match_original = all(word in combined_text for word in re.findall(r'\b\w{3,}\b', original_q)) if len(original_q)>2 else (original_q in combined_text)
+        # 3. Жесткая фильтрация: ВСЕ слова из запроса должны быть в треке
+        # Это исключает появление мусора в инлайне
+        match_orig = all(w in combined_text for w in words_orig) if words_orig else (original_q in combined_text)
+        match_norm = all(w in combined_text for w in words_norm) if words_norm else (normalized_q in combined_text)
         
-        if match_normalized or match_original:
-             results.append(row)
+        if match_orig or match_norm:
+            results.append(row)
 
-        if len(results) >= limit:
-            break
-
-    # Сортировка: точные совпадения (когда запрос целиком есть в названии) поднимаем наверх
+    # 4. Система ранжирования для инлайна (решает проблему "плм маша")
     def sort_key(row):
         score = 0
-        comb = f"{row[1]} {row[2]}".lower()
-        if normalized_q in comb: score += 10
-        if original_q in comb: score += 5
+        comb = f"{row[2]} {row[1]}".lower() # artist title
+        
+        # Точное вхождение всей фразы (с учетом алиаса) дает максимум очков
+        if normalized_q in comb or original_q in comb: 
+            score += 200
+            
+        # Каждое совпавшее слово тоже прибавляет вес
+        for w in words_norm.union(words_orig):
+            if w in comb: 
+                score += 10
+                
+        # Слово в названии трека ценится выше, чем в авторе
+        for w in words_norm.union(words_orig):
+            if w in (row[1] or "").lower():
+                score += 5
+                
         return score
         
     results.sort(key=sort_key, reverse=True)
-
-    return results
+    return results[:limit]
 
 def get_history(user_id: int, limit: int = 5):
     conn = get_connection()
