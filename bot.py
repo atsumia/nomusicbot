@@ -179,7 +179,7 @@ async def show_history(callback: CallbackQuery):
 async def show_favorites(callback: CallbackQuery):
     records = database.get_favorites(callback.from_user.id)
     if not records:
-        await callback.answer("У тебя пока нет избранных треков ❤️️", show_alert=True)
+        await callback.answer("У тебя пока нет избранных треков ❤️", show_alert=True)
         return
     buttons = []
     for db_id, track_id, title, artist, url in records:
@@ -193,11 +193,17 @@ async def toggle_fav_callback(callback: CallbackQuery):
     track_id = callback.data.split("fav:")[1]
     is_now_fav = database.toggle_favorite(callback.from_user.id, track_id)
     btn_text = "❤️ В избранном" if is_now_fav else "🤍 В избранное"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=btn_text, callback_data=f"fav:{track_id}")]])
-    await callback.message.edit_reply_markup(reply_markup=kb)
+    
+    kb_dict = callback.message.reply_markup.model_dump()
+    for row in kb_dict['inline_keyboard']:
+        for btn in row:
+            if btn.get('callback_data') == callback.data:
+                btn['text'] = btn_text
+                
+    await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(**kb_dict))
     await callback.answer("Избранное обновлено!")
 
-# --- Логика обычного поиска с умными кнопками ---
+# --- Логика обычного поиска ---
 
 def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     session = USER_SESSIONS.get(user_id, {})
@@ -214,7 +220,6 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
 
     buttons = []
     
-    # 1. Треки текущей страницы
     for idx, item in enumerate(current_items, start=start_idx + 1):
         short_id = f"{user_id}_{item['id']}"[:50]
         session.setdefault("items", {})[short_id] = item 
@@ -232,7 +237,6 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         btn_text = f"{idx}. {title_artist}{warn_badge}"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl:{short_id}")])
 
-    # 2. Пагинация
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"page:{page - 1}"))
@@ -241,23 +245,7 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page:{page + 1}"))
     buttons.append(nav_row)
 
-    # 3. Динамические умные кнопки (если это Яндекс Музыка)
-    first_item = results[0] if results else None
-    if first_item and search_mode == "official":
-        album_id = first_item.get('album_id')
-        album_title = first_item.get('album_title')
-        artist_id = first_item.get('artist_id')
-
-        smart_row = []
-        if album_id and album_title:
-            smart_row.append(InlineKeyboardButton(text=f"💿 Альбом", callback_data=f"album:{album_id}"))
-        if artist_id:
-            smart_row.append(InlineKeyboardButton(text=f"👤 Топ артиста", callback_data=f"artist_top:{artist_id}"))
-        
-        if smart_row:
-            buttons.append(smart_row)
-
-    # 4. Переключатель источника
+    # Переключатель источника (убрали кнопки альбома и артиста из поиска)
     if search_mode == "official":
         buttons.append([InlineKeyboardButton(text="☁️ Искать в SoundCloud", callback_data="switch:remix")])
     else:
@@ -271,7 +259,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         fallback_triggered = False
         results = await search_tracks(query, mode=user_mode, limit=15)
         
-        # Автоматический фоллбэк: если в Яндексе пусто, ищем в SoundCloud
+        # Автоматический фоллбэк: если в Яндексе пусто, ищем в SC и предупреждаем
         if not results and user_mode == "official":
             results = await search_tracks(query, mode="remix", limit=15)
             user_mode = "remix"
@@ -292,11 +280,12 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         kb = build_search_keyboard(user_id, page=0)
         
         if fallback_triggered:
-            mode_title = "☁️ SoundCloud (В Яндекс.Музыке не найдено)"
+            text = "⚠️ <b>В Яндекс.Музыке трек не найден.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
         else:
-            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
+            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️️ Ремиксы (SoundCloud)"
+            text = f"Результаты: <b>{mode_title}</b>"
 
-        await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
+        await status_msg.edit_text(text, reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
 
@@ -494,11 +483,22 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         audio = FSInputFile(path=file_path, filename=f"{track['artist']} - {track['title']}.mp3")
         thumbnail = FSInputFile(thumb_path) if thumb_path and os.path.exists(thumb_path) else None
 
+        kb_buttons = []
+        
+        # Кнопки Альбома и Топа Артиста прикрепляются к самому аудиосообщению
+        smart_row = []
+        if track.get('album_id'):
+            smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{track['album_id']}"))
+        if track.get('artist_id'):
+            smart_row.append(InlineKeyboardButton(text="👤 Топ артиста", callback_data=f"artist_top:{track['artist_id']}"))
+        if smart_row:
+            kb_buttons.append(smart_row)
+
         is_fav = database.is_favorite(user_id, track_id)
         fav_text = "❤️ В избранном" if is_fav else "🤍 В избранное"
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")
-        ]])
+        kb_buttons.append([InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
 
         sent_msg = await bot.send_audio(
             chat_id=chat_id,
