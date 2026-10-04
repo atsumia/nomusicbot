@@ -2,7 +2,7 @@ import os
 import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import (
 FSInputFile,
 InlineKeyboardMarkup,
@@ -21,6 +21,7 @@ import database
 from downloader import (
 download_track,
 search_tracks,
+search_artist_discography,
 get_ym_album_tracks,
 get_ym_artist_top
 )
@@ -44,15 +45,16 @@ def get_bottom_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
 user = database.get_user(user_id)
 mode_label = "Режим: Официальные" if user['search_mode'] == 'official' else "Режим: SoundCloud"
 keyboard = [
-[KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="👤 Мой кабинет")],
-[KeyboardButton(text=f"🎧 {mode_label}")]
+[KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="🎙 Поиск артиста")],
+[KeyboardButton(text="👤 Мой кабинет"), KeyboardButton(text=f"🎧 {mode_label}")]
 ]
 return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
 user = database.get_user(user_id)
 mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
 return InlineKeyboardMarkup(inline_keyboard=[
-[InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search")],
+[InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
+InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
 [InlineKeyboardButton(text="👤 Мой кабинет", callback_data="menu:profile")],
 [InlineKeyboardButton(text=f"🎧 Режим: {mode_text}", callback_data="menu:toggle_mode")]
 ])
@@ -71,12 +73,27 @@ inline_kb = get_main_menu(message.from_user.id)
 welcome_text = (
 "👋 <b>Привет! Это NoMusic.</b>\n\n"
 "Сервис предназначен для поиска и загрузки аудиозаписей.\n\n"
-"<blockquote>💡 <i>Чтобы найти трек, просто отправь его название, имя артиста или ссылку на композицию.</i></blockquote>"
+"<blockquote>💡 <i>Чтобы найти трек, отправь его название или ссылку. "
+"Для поиска всей дискографии артиста нажми «🎙 Поиск артиста».</i></blockquote>"
 )
 await message.answer(welcome_text, reply_markup=reply_kb, parse_mode="HTML")
 await message.answer("🎛 <b>Навигация и управление:</b>", reply_markup=inline_kb, parse_mode="HTML")
+@dp.message(Command("artist"))
+@dp.message(F.text == "🎙 Поиск артиста")
+async def artist_search_start(message: types.Message):
+user_id = message.from_user.id
+USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "artist"
+await message.answer(
+"🎙 <b>Поиск по артисту</b>\n\n"
+"Отправь имя исполнителя (например: <code>MACAN</code>, <code>CUPSIZE</code>, <code>Miyagi</code>).\n"
+"Я выгружу его дискографию с официальных площадок с сортировкой по популярности.",
+parse_mode="HTML"
+)
 @dp.message(F.text == "🔎 Поиск")
 async def reply_search_handler(message: types.Message):
+user_id = message.from_user.id
+if user_id in USER_SESSIONS:
+USER_SESSIONS[user_id]["awaiting"] = None
 await message.answer("📝 Напиши название трека, имя артиста или отправь ссылку:")
 @dp.message(F.text == "👤 Мой кабинет")
 async def reply_profile_handler(message: types.Message):
@@ -108,7 +125,19 @@ await callback.message.edit_text("🎛 <b>Навигация и управлен
 await callback.answer()
 @dp.callback_query(F.data == "menu:search")
 async def menu_search(callback: CallbackQuery):
+user_id = callback.from_user.id
+if user_id in USER_SESSIONS:
+USER_SESSIONS[user_id]["awaiting"] = None
 await callback.message.answer("📝 Отправь мне название трека или ссылку для поиска!")
+await callback.answer()
+@dp.callback_query(F.data == "menu:artist_search")
+async def menu_artist_search(callback: CallbackQuery):
+user_id = callback.from_user.id
+USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "artist"
+await callback.message.answer(
+"🎙 <b>Поиск по артисту:</b>\nОтправь имя исполнителя для выгрузки дискографии.",
+parse_mode="HTML"
+)
 await callback.answer()
 @dp.callback_query(F.data == "menu:toggle_mode")
 async def menu_toggle_mode(callback: CallbackQuery):
@@ -171,11 +200,12 @@ if btn.get('callback_data') == callback.data:
 btn['text'] = btn_text
 await callback.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(kb_dict))
 await callback.answer("Избранное обновлено!")
---- Логика обычного поиска ---
+--- Логика построения меню результатов ---
 def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
 session = USER_SESSIONS.get(user_id, {})
 results = session.get("results", [])
 search_mode = session.get("mode", "official")
+is_discography = session.get("is_discography", False)
 items_per_page = 5
 total_pages = max(1, (len(results) + items_per_page - 1) // items_per_page)
 page = max(0, min(page, total_pages - 1))
@@ -202,7 +232,9 @@ nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"page:{page - 
 nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
 if page < total_pages - 1:
 nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page:{page + 1}"))
+if nav_row:
 buttons.append(nav_row)
+if not is_discography:
 if search_mode == "official":
 buttons.append([InlineKeyboardButton(text="☁️ Искать в SoundCloud", callback_data="switch:remix")])
 else:
@@ -220,25 +252,58 @@ USER_SESSIONS[user_id] = {
 "mode": user_mode,
 "results": results,
 "items": {},
-"current_page": 0
+"current_page": 0,
+"is_discography": False,
+"awaiting": None
 }
 kb = build_search_keyboard(user_id, page=0)
 mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
 await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
 except Exception as e:
 await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
+async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_query: str):
+status_msg = await bot.send_message(chat_id, "🎙 <i>Ищу артиста и формирую дискографию...</i>", parse_mode="HTML")
+try:
+results = await search_artist_discography(artist_query, limit=50)
+if not results:
+await status_msg.edit_text(f"Исполнитель «{artist_query}» не найден на официальных площадках 😔")
+return
+artist_display_name = results[0].get('uploader', artist_query)
+USER_SESSIONS[user_id] = {
+"query": artist_query,
+"mode": "official",
+"results": results,
+"items": {},
+"current_page": 0,
+"is_discography": True,
+"awaiting": None
+}
+kb = build_search_keyboard(user_id, page=0)
+header_text = (
+f"👤 <b>Дискография:</b> {artist_display_name}\n"
+f"📊 Найдено треков: <b>{len(results)}</b>\n"
+"<blockquote>🔥 Отсортировано по популярности</blockquote>"
+)
+await status_msg.edit_text(header_text, reply_markup=kb, parse_mode="HTML")
+except Exception as e:
+await status_msg.edit_text(f"Ошибка при поиске артиста: {str(e)}")
 @dp.message(F.text.regexp(r'https?://[^\s]+'))
 async def handle_url(message: types.Message):
 url = message.text.strip()
 status_msg = await message.answer("⏳ Загрузка ссылки...")
 await process_and_send_audio(message.chat.id, message.from_user.id, "link_track", url, status_msg)
 @dp.message(F.text)
-async def handle_search(message: types.Message):
-query = message.text.strip()
+async def handle_text_messages(message: types.Message):
 user_id = message.from_user.id
+text = message.text.strip()
+session = USER_SESSIONS.get(user_id, {})
+if session.get("awaiting") == "artist":
+session["awaiting"] = None
+await perform_artist_search_and_send(message.chat.id, user_id, text)
+return
 user = database.get_user(user_id, message.from_user.username or message.from_user.first_name)
 mode = user['search_mode']
-await perform_search_and_send(message.chat.id, user_id, query, mode)
+await perform_search_and_send(message.chat.id, user_id, text, mode)
 --- Обработка клика по треку ---
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
@@ -324,12 +389,12 @@ return
 url, title, artist, track_id = record
 status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
 await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
---- Кнопки Альбома и Артиста ---
+--- Навигация по альбомам и артистам ---
 @dp.callback_query(F.data.startswith("album:"))
 async def callback_album(callback: CallbackQuery):
 album_id = callback.data.split(":")[1]
 user_id = callback.from_user.id
-await callback.answer("Загружаю релиз...")
+await callback.answer("Загружаю альбом...")
 status_msg = await callback.message.answer("💿 <i>Загружаю треклист альбома...</i>", parse_mode="HTML")
 tracks = await get_ym_album_tracks(album_id)
 if not tracks:
@@ -340,7 +405,8 @@ USER_SESSIONS[user_id] = {
 "mode": "official",
 "results": tracks,
 "items": {},
-"current_page": 0
+"current_page": 0,
+"is_discography": True
 }
 album_title = tracks[0].get('album_title') or 'Альбом'
 kb = build_search_keyboard(user_id, page=0)
@@ -350,17 +416,18 @@ async def callback_artist_top(callback: CallbackQuery):
 artist_id = callback.data.split(":")[1]
 user_id = callback.from_user.id
 await callback.answer("Загружаю дискографию...")
-status_msg = await callback.message.answer("👤 <i>Загружаю популярные треки...</i>", parse_mode="HTML")
+status_msg = await callback.message.answer("👤 <i>Загружаю дискографию артиста...</i>", parse_mode="HTML")
 tracks = await get_ym_artist_top(artist_id)
 if not tracks:
-await status_msg.edit_text("Не удалось загрузить популярные треки 🥲")
+await status_msg.edit_text("Не удалось загрузить треки артиста 🥲")
 return
 USER_SESSIONS[user_id] = {
 "query": f"Артист {artist_id}",
 "mode": "official",
 "results": tracks,
 "items": {},
-"current_page": 0
+"current_page": 0,
+"is_discography": True
 }
 artist_name = tracks[0].get('uploader') or 'Артист'
 kb = build_search_keyboard(user_id, page=0)
@@ -508,6 +575,7 @@ await site.start()
 async def set_bot_commands():
 commands = [
 BotCommand(command="start", description="Главное меню"),
+BotCommand(command="artist", description="Поиск дискографии артиста"),
 ]
 await bot.set_my_commands(commands)
 async def main():
