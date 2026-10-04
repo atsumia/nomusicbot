@@ -1,18 +1,10 @@
 import sqlite3
 import os
 
-# Поддержка постоянных дисков (Persistent Disks) для Render
-DB_DIR = "/data"
-if os.path.exists(DB_DIR):
-    DB_NAME = os.path.join(DB_DIR, "database.db")
-else:
-    DB_NAME = "database.db"
+DB_NAME = "database.db"
 
 def get_connection():
-    conn = sqlite3.connect(DB_NAME)
-    # Создаем кастомную SQL-функцию для правильного нижнего регистра кириллицы
-    conn.create_function("LOWERCASE", 1, lambda x: str(x).lower() if x else "")
-    return conn
+    return sqlite3.connect(DB_NAME)
 
 def init_db():
     conn = get_connection()
@@ -139,27 +131,66 @@ def get_cached_file_id(track_id: str) -> str:
     conn.close()
     return row[0] if row else None
 
+# --- Поиск по кэшу с нормализацией регистра и переводом раскладки ---
+
+COMMON_ALIASES = {
+    'макан': 'macan',
+    'macan': 'макан',
+    'оксимирон': 'oxxxymiron',
+    'oxxxymiron': 'оксимирон',
+    'окси': 'oxxxymiron',
+    'мияги': 'miyagi',
+    'miyagi': 'мияги',
+    'скриптонит': 'scriptonite',
+    'scriptonite': 'скриптонит',
+    'фараон': 'pharaoh',
+    'pharaoh': 'фараон',
+    'кизару': 'kizaru',
+    'kizaru': 'кизару',
+    'тейп': 'big baby tape',
+    'моргенштерн': 'morgenshtern',
+    'morgenshtern': 'моргенштерн',
+    'френдли таг': 'friendly thug',
+    'кино': 'kino',
+    'kino': 'кино',
+    'лсп': 'lsp',
+    'lsp': 'лсп'
+}
+
 def search_cached_tracks(query: str, limit: int = 15):
-    """Ищет треки по локальной базе с абсолютной нечувствительностью к регистру"""
     conn = get_connection()
     c = conn.cursor()
-    
-    # Переводим сам поисковый запрос в нижний регистр
-    query_lower = query.lower().strip()
-    
-    # Используем INSTR вместо LIKE, чтобы обойти ограничения SQLite на кириллицу
-    c.execute("""
+    c.execute('''
         SELECT track_id, title, artist, telegram_file_id 
         FROM downloads 
-        WHERE (INSTR(LOWERCASE(title), ?) > 0 OR INSTR(LOWERCASE(artist), ?) > 0) 
-        AND telegram_file_id IS NOT NULL 
-        GROUP BY track_id 
-        LIMIT ?
-    """, (query_lower, query_lower, limit))
-    
+        WHERE telegram_file_id IS NOT NULL 
+        GROUP BY track_id
+    ''')
     rows = c.fetchall()
     conn.close()
-    return rows
+
+    q = query.lower().strip()
+    
+    # Генерация синонима (например, макан -> macan)
+    alias_q = COMMON_ALIASES.get(q, "")
+
+    results = []
+    for row in rows:
+        track_id, title, artist, file_id = row
+        t_low = (title or "").lower()
+        a_low = (artist or "").lower()
+        combined = f"{t_low} {a_low}"
+
+        # Проверка прямого вхождения без учета регистра
+        if q in t_low or q in a_low or q in combined:
+            results.append(row)
+        elif alias_q and (alias_q in t_low or alias_q in a_low or alias_q in combined):
+            results.append(row)
+
+        if len(results) >= limit:
+            break
+
+    return results
 
 def get_history(user_id: int, limit: int = 5):
     conn = get_connection()
