@@ -245,7 +245,6 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page:{page + 1}"))
     buttons.append(nav_row)
 
-    # Переключатель источника (убрали кнопки альбома и артиста из поиска)
     if search_mode == "official":
         buttons.append([InlineKeyboardButton(text="☁️ Искать в SoundCloud", callback_data="switch:remix")])
     else:
@@ -259,11 +258,11 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         fallback_triggered = False
         results = await search_tracks(query, mode=user_mode, limit=15)
         
-        # Автоматический фоллбэк: если в Яндексе пусто, ищем в SC и предупреждаем
         if not results and user_mode == "official":
             results = await search_tracks(query, mode="remix", limit=15)
-            user_mode = "remix"
-            fallback_triggered = True
+            if results:
+                user_mode = "remix"
+                fallback_triggered = True
 
         if not results:
             await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос.")
@@ -282,7 +281,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         if fallback_triggered:
             text = "⚠️ <b>В Яндекс.Музыке трек не найден.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
         else:
-            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️️ Ремиксы (SoundCloud)"
+            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
             text = f"Результаты: <b>{mode_title}</b>"
 
         await status_msg.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -411,7 +410,17 @@ async def callback_download(callback: CallbackQuery):
 
     await callback.answer()
     status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
-    await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
+    
+    # Передаем album_id и artist_id из сессии поиска напрямую в отправку
+    await process_and_send_audio(
+        callback.message.chat.id, 
+        user_id, 
+        item['id'], 
+        item['url'], 
+        status_msg,
+        artist_id=item.get('artist_id'),
+        album_id=item.get('album_id')
+    )
 
 @dp.callback_query(F.data.startswith("confirm_dl:"))
 async def callback_confirm_download(callback: CallbackQuery):
@@ -435,7 +444,15 @@ async def callback_confirm_download(callback: CallbackQuery):
         pass
 
     status_msg = await callback.message.answer("⏳ Загрузка подтвержденного трека...")
-    await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
+    await process_and_send_audio(
+        callback.message.chat.id, 
+        user_id, 
+        item['id'], 
+        item['url'], 
+        status_msg,
+        artist_id=item.get('artist_id'),
+        album_id=item.get('album_id')
+    )
 
 @dp.callback_query(F.data == "back_to_results")
 async def callback_back_to_results(callback: CallbackQuery):
@@ -465,7 +482,7 @@ async def callback_dl_db(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
-async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message):
+async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message, artist_id=None, album_id=None):
     file_path = None
     thumb_path = None
     try:
@@ -484,13 +501,17 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         thumbnail = FSInputFile(thumb_path) if thumb_path and os.path.exists(thumb_path) else None
 
         kb_buttons = []
-        
-        # Кнопки Альбома и Топа Артиста прикрепляются к самому аудиосообщению
         smart_row = []
-        if track.get('album_id'):
-            smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{track['album_id']}"))
-        if track.get('artist_id'):
-            smart_row.append(InlineKeyboardButton(text="👤 Топ артиста", callback_data=f"artist_top:{track['artist_id']}"))
+        
+        # Гарантированное добавление кнопок Альбома и Артиста под трек
+        a_id = artist_id or track.get('artist_id')
+        al_id = album_id or track.get('album_id')
+
+        if al_id:
+            smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{al_id}"))
+        if a_id:
+            smart_row.append(InlineKeyboardButton(text="👤 Топ артиста", callback_data=f"artist_top:{a_id}"))
+            
         if smart_row:
             kb_buttons.append(smart_row)
 
