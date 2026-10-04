@@ -165,8 +165,6 @@ async def search_yandex(query: str, limit: int = 15):
                 art_name_lower = art.name.lower()
                 q_lower = q.lower()
                 
-                # Если ввели просто имя (например "macan" == "macan" или "tape" входит в "big baby tape")
-                # Но отсекает длинные запросы вроде "по барабану капсайз" (оно не входит в "cupsize")
                 if q_lower == art_name_lower or q_lower in art_name_lower.split():
                     is_artist_search = True
                 
@@ -190,7 +188,7 @@ async def search_yandex(query: str, limit: int = 15):
                 else:
                     return tracks
 
-            # Запасной прямой поиск по трекам (всегда возвращает список, без карточки)
+            # Запасной прямой поиск по трекам
             tr_sr = await client.search(text=q, type_='track', page=0)
             if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
                 return [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
@@ -341,15 +339,29 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     final_artist, final_title = parse_sc_title_and_artist(raw_title, raw_uploader)
     cover_url = raw_info.get('thumbnail')
 
+    # Shazam с интеллектуальной валидацией совпадения слов
     if '(slowed' not in final_title.lower() and '(sped' not in final_title.lower():
         try:
             out = await shazam.recognize(mp3_path)
             track_info = out.get('track')
             if track_info:
-                final_title = track_info.get('title', final_title)
-                final_artist = track_info.get('subtitle', final_artist)
-                images = track_info.get('images', {})
-                cover_url = images.get('coverarthq') or images.get('coverart') or cover_url
+                shazam_title = track_info.get('title', '')
+                shazam_artist = track_info.get('subtitle', '')
+
+                orig_combined = f"{raw_title} {raw_uploader}".lower()
+                shazam_words = re.findall(r'\w{3,}', f"{shazam_title} {shazam_artist}".lower())
+
+                # Ищем хотя бы одно значимое слово из Shazam в исходном названии SoundCloud
+                has_match = any(word in orig_combined for word in shazam_words)
+                is_informative = '-' in raw_title or '—' in raw_title
+
+                if has_match or not is_informative:
+                    final_title = shazam_title or final_title
+                    final_artist = shazam_artist or final_artist
+                    images = track_info.get('images', {})
+                    cover_url = images.get('coverarthq') or images.get('coverart') or cover_url
+                else:
+                    print(f"[Shazam Rejected] Несовпадение: '{raw_title}' != '{shazam_artist} - {shazam_title}'")
         except Exception:
             pass
 
