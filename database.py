@@ -131,6 +131,24 @@ def get_cached_file_id(track_id: str) -> str:
     conn.close()
     return row[0] if row else None
 
+def search_cached_tracks(query: str, limit: int = 15):
+    """Ищет треки только по локальной базе, которые уже имеют telegram_file_id"""
+    conn = get_connection()
+    c = conn.cursor()
+    search_pattern = f"%{query}%"
+    
+    c.execute("""
+        SELECT track_id, title, artist, telegram_file_id 
+        FROM downloads 
+        WHERE (title LIKE ? OR artist LIKE ?) AND telegram_file_id IS NOT NULL 
+        GROUP BY track_id 
+        LIMIT ?
+    """, (search_pattern, search_pattern, limit))
+    
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
 def get_history(user_id: int, limit: int = 5):
     conn = get_connection()
     c = conn.cursor()
