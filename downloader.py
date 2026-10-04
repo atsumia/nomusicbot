@@ -152,14 +152,12 @@ async def search_yandex(query: str, limit: int = 15):
             artist_name = q.title()
             cover_url = None
 
-            # 1. Если Яндекс сам отдал артиста как лучший результат
             if sr.best and sr.best.type == 'artist':
                 is_artist_search = True
                 artist_name = sr.best.result.name
                 if sr.best.result.cover and sr.best.result.cover.uri:
                     cover_url = f"https://{sr.best.result.cover.uri.replace('%%', '400x400')}"
 
-            # 2. Проверка совпадения запроса с именем найденного артиста
             if sr.artists and sr.artists.results:
                 art = sr.artists.results[0]
                 art_name_lower = art.name.lower()
@@ -188,7 +186,6 @@ async def search_yandex(query: str, limit: int = 15):
                 else:
                     return tracks
 
-            # Запасной прямой поиск по трекам
             tr_sr = await client.search(text=q, type_='track', page=0)
             if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
                 return [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
@@ -339,7 +336,6 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     final_artist, final_title = parse_sc_title_and_artist(raw_title, raw_uploader)
     cover_url = raw_info.get('thumbnail')
 
-    # Исключаем вызов Shazam для инструменталов, минусовок и замедленных версий
     lower_check = f"{final_title} {raw_title}".lower()
     skip_keywords = ['slowed', 'sped up', 'speed up', 'минус', 'instrumental', 'instr', 'karaoke', 'beat', 'remake']
     should_skip_shazam = any(k in lower_check for k in skip_keywords)
@@ -362,10 +358,8 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
                     final_artist = shazam_artist or final_artist
                     images = track_info.get('images', {})
                     cover_url = images.get('coverarthq') or images.get('coverart') or cover_url
-                else:
-                    print(f"[Shazam Rejected] Несовпадение: '{raw_title}' != '{shazam_artist} - {shazam_title}'")
-        except Exception as e:
-            print(f"Shazam error: {e}")
+        except Exception:
+            pass
 
     cover_file = f"{base_path}_thumb.jpg"
     thumb_path = None
@@ -429,21 +423,26 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     }
 
 async def get_direct_stream_url(url: str) -> str:
-    """Получает прямую ссылку на audio-поток для работы Inline-режима Telegram"""
+    """Получает прямую ссылку на аудиопоток. Добавляет .mp3, чтобы Telegram не браковал URL."""
     try:
         if url.startswith("ym://"):
             client = await get_ym_client()
+            if not client:
+                return None
             track_id = url.replace("ym://", "")
             tracks = await client.tracks([track_id])
             if tracks:
                 info = await tracks[0].get_download_info_async()
                 mp3_info = [i for i in info if i.codec == 'mp3']
                 best = max(mp3_info, key=lambda x: x.bitrate_in_kbps) if mp3_info else info[0]
-                return await best.get_direct_link_async()
+                link = await best.get_direct_link_async()
+                # Телеграм требует расширения аудиофайла в URL
+                return link + "&ext=.mp3" if "?" in link else link + "?ext=.mp3"
         else:
             loop = asyncio.get_event_loop()
             def extract_sc_stream():
-                ydl_opts = {'format': 'bestaudio', 'quiet': True, 'no_warnings': True}
+                # skip_download=True кардинально ускоряет процесс для инлайна
+                ydl_opts = {'format': 'bestaudio', 'quiet': True, 'no_warnings': True, 'skip_download': True}
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     data = ydl.extract_info(url, download=False)
                     return data.get('url')
