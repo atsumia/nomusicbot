@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>NoMusic</title>
+    <title>NoMusic Stream</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -39,14 +39,14 @@
         }
         .apple-glass {
             background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            backdrop-filter: blur(25px);
+            -webkit-backdrop-filter: blur(25px);
             border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
         }
         .dark .apple-glass {
-            background: rgba(28, 28, 30, 0.88);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
+            background: rgba(24, 24, 26, 0.88);
+            backdrop-filter: blur(25px);
+            -webkit-backdrop-filter: blur(25px);
             border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
         }
         .glass-card {
@@ -57,11 +57,11 @@
             border: 0.5px solid rgba(0, 0, 0, 0.04);
         }
         .dark .glass-card {
-            background: rgba(36, 36, 38, 0.85);
+            background: rgba(32, 32, 36, 0.85);
             backdrop-filter: blur(14px);
             -webkit-backdrop-filter: blur(14px);
-            box-shadow: 0 6px 24px -2px rgba(0, 0, 0, 0.4);
-            border: 0.5px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 6px 24px -2px rgba(0, 0, 0, 0.35);
+            border: 0.5px solid rgba(255, 255, 255, 0.07);
         }
         .no-scrollbar::-webkit-scrollbar {
             display: none;
@@ -76,13 +76,13 @@
         }
         input[type=range]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            height: 14px;
-            width: 14px;
+            height: 15px;
+            width: 15px;
             border-radius: 50%;
             background: #FFFFFF;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+            box-shadow: 0 2px 7px rgba(0,0,0,0.35);
             cursor: pointer;
-            margin-top: -5px;
+            margin-top: -5.5px;
         }
         input[type=range]::-webkit-slider-runnable-track {
             height: 4px;
@@ -121,7 +121,7 @@
                 <div class="absolute -right-6 -bottom-6 w-32 h-32 bg-apple-red/30 rounded-full blur-2xl pointer-events-none"></div>
                 <span class="text-xs font-bold uppercase tracking-widest text-apple-red">Лицензионный каталог</span>
                 <h2 class="text-2xl font-black mt-1 leading-snug">Твоя музыка.<br>В чистом виде.</h2>
-                <p class="text-xs text-zinc-400 mt-2 max-w-[220px]">Студийные релизы, оригинальные обложки и прямой звук.</p>
+                <p class="text-xs text-zinc-400 mt-2 max-w-[220px]">Оригинальный звук, студийные релизы и синхронизация с Telegram.</p>
                 <button onclick="switchTab('search')" class="mt-4 px-4 py-2 bg-apple-red hover:bg-apple-coral active:scale-95 transition text-white rounded-full text-xs font-semibold shadow-md flex items-center space-x-1.5">
                     <span>Начать поиск</span>
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path></svg>
@@ -135,10 +135,9 @@
                     <span onclick="loadTrendingReleases(true)" class="text-xs font-medium text-apple-red cursor-pointer active:opacity-70">Обновить</span>
                 </div>
                 <div class="flex space-x-4 overflow-x-auto no-scrollbar pb-2 pt-1" id="releases-carousel">
-                    <!-- Загрузка реальных релизов через API -->
                     <div class="text-xs text-apple-textGray py-8 px-2 flex items-center space-x-2">
                         <span class="animate-spin text-sm">⏳</span>
-                        <span>Загрузка каталога Apple Storefront...</span>
+                        <span>Загрузка чарта...</span>
                     </div>
                 </div>
             </div>
@@ -155,7 +154,7 @@
             <div class="grid grid-cols-2 gap-3 pt-1">
                 <div onclick="switchTab('library')" class="glass-card p-4 rounded-2xl cursor-pointer active:scale-95 transition flex flex-col justify-between h-28">
                     <div class="w-9 h-9 rounded-xl bg-apple-red text-white flex items-center justify-center text-lg shadow-sm">
-                        ❤️️
+                        <svg class="w-5 h-5 fill-white" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
                     </div>
                     <div>
                         <div class="font-bold text-sm">Любимые</div>
@@ -164,11 +163,11 @@
                 </div>
                 <div onclick="switchTab('search')" class="glass-card p-4 rounded-2xl cursor-pointer active:scale-95 transition flex flex-col justify-between h-28">
                     <div class="w-9 h-9 rounded-xl bg-blue-500 text-white flex items-center justify-center text-lg shadow-sm">
-                        🔎
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                     </div>
                     <div>
                         <div class="font-bold text-sm">Каталог</div>
-                        <div class="text-[11px] text-apple-textGray">Быстрый поиск</div>
+                        <div class="text-[11px] text-apple-textGray">Поиск в боте</div>
                     </div>
                 </div>
             </div>
@@ -198,7 +197,7 @@
 
             <div id="search-list" class="space-y-2">
                 <div class="text-center py-16 text-apple-textGray text-xs">
-                    Введите название трека или имя артиста.<br>Поиск подключен напрямую к лицензионной витрине.
+                    Введите название трека или имя артиста.<br>Поиск подключен напрямую к алгоритмам бота.
                 </div>
             </div>
 
@@ -209,16 +208,16 @@
             <h2 class="text-2xl font-black">Медиатека</h2>
             
             <div class="flex space-x-2 border-b border-black/5 dark:border-white/10 pb-2 text-sm font-semibold">
-                <button onclick="setLibraryTab('favs')" id="lib-tab-favs" class="text-apple-red border-b-2 border-apple-red pb-1">Избранное</button>
+                <button onclick="setLibraryTab('favs')" id="lib-tab-favs" class="text-apple-red border-b-2 border-apple-red pb-1 font-bold">Избранное</button>
                 <button onclick="setLibraryTab('hist')" id="lib-tab-hist" class="text-apple-textGray pb-1">История</button>
             </div>
 
             <div id="library-content" class="space-y-2"></div>
         </section>
 
-        <!-- ================= ЭКРАН 4: ПРОФИЛЬ (ЧИСТЫЙ UI) ================= -->
+        <!-- ================= ЭКРАН 4: КАБИНЕТ ================= -->
         <section id="screen-profile" class="hidden space-y-4">
-            <h2 class="text-2xl font-black">Профиль</h2>
+            <h2 class="text-2xl font-black">Кабинет</h2>
             
             <div class="glass-card rounded-3xl p-5 space-y-4">
                 <div class="flex items-center space-x-4">
@@ -245,8 +244,8 @@
                         <span class="font-semibold text-green-500">Включен (Haptic)</span>
                     </div>
                     <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Версия Mini App</span>
-                        <span class="font-semibold text-zinc-400">1.2 (Apple Minimal)</span>
+                        <span class="text-apple-textGray">Поисковый движок</span>
+                        <span class="font-semibold text-zinc-400">Синхронизирован с ботом</span>
                     </div>
                 </div>
 
@@ -270,8 +269,13 @@
             </div>
         </div>
         <div class="flex items-center space-x-2 pl-2" onclick="event.stopPropagation()">
-            <button onclick="toggleAudioPlay()" id="mini-play-btn" class="w-9 h-9 rounded-full bg-apple-red text-white flex items-center justify-center font-bold active:scale-90 transition shadow-sm">
-                ▶
+            <!-- Нативная кнопка Play / Pause без эмодзи -->
+            <button onclick="toggleAudioPlay()" id="mini-play-btn" class="w-10 h-10 rounded-full bg-apple-red text-white flex items-center justify-center active:scale-90 transition shadow-md">
+                <svg id="mini-icon-play" class="w-4 h-4 fill-white ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <svg id="mini-icon-pause" class="w-4 h-4 fill-white hidden" viewBox="0 0 24 24">
+                    <rect x="6" y="5" width="4" height="14" rx="1.5" />
+                    <rect x="14" y="5" width="4" height="14" rx="1.5" />
+                </svg>
             </button>
         </div>
     </div>
@@ -283,7 +287,10 @@
                 ✕
             </button>
             <span class="text-xs uppercase tracking-widest text-apple-textGray font-semibold">Сейчас играет</span>
-            <div class="w-8"></div>
+            <!-- Кнопка отправить трек в личку бота -->
+            <button onclick="sendTrackToTelegram()" title="Скачать в Telegram" class="w-8 h-8 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center text-xs active:scale-90 transition">
+                <svg class="w-4 h-4 text-apple-red" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            </button>
         </div>
 
         <div class="flex justify-center my-auto py-4">
@@ -298,8 +305,8 @@
                     <h2 id="full-title" class="text-xl font-black truncate">Название трека</h2>
                     <p id="full-artist" class="text-sm text-apple-textGray font-medium truncate mt-0.5">Исполнитель</p>
                 </div>
-                <button onclick="toggleFavoriteCurrent()" id="full-fav-btn" class="text-2xl active:scale-125 transition">
-                    🤍
+                <button onclick="toggleFavoriteCurrent()" id="full-fav-btn" class="w-9 h-9 rounded-full flex items-center justify-center active:scale-125 transition">
+                    <svg id="full-fav-icon" class="w-6 h-6 fill-none stroke-apple-textGray" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
                 </button>
             </div>
 
@@ -311,10 +318,29 @@
                 </div>
             </div>
 
+            <!-- Элементы управления в стиле Apple Music (SVG) -->
             <div class="flex items-center justify-center space-x-8">
-                <button onclick="prevTrack()" class="text-2xl active:scale-75 transition text-apple-textGray hover:text-black dark:hover:text-white">⏮</button>
-                <button onclick="toggleAudioPlay()" id="full-play-btn" class="w-16 h-16 rounded-full bg-apple-red text-white text-2xl flex items-center justify-center shadow-lg active:scale-90 transition">▶</button>
-                <button onclick="nextTrack()" class="text-2xl active:scale-75 transition text-apple-textGray hover:text-black dark:hover:text-white">⏭</button>
+                <button onclick="prevTrack()" class="text-apple-textGray hover:text-black dark:hover:text-white active:scale-75 transition">
+                    <svg class="w-7 h-7 fill-current" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+                </button>
+                <button onclick="toggleAudioPlay()" id="full-play-btn" class="w-16 h-16 rounded-full bg-apple-red text-white flex items-center justify-center shadow-xl active:scale-90 transition">
+                    <svg id="full-icon-play" class="w-6 h-6 fill-white ml-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    <svg id="full-icon-pause" class="w-6 h-6 fill-white hidden" viewBox="0 0 24 24">
+                        <rect x="6" y="5" width="4" height="14" rx="1.5" />
+                        <rect x="14" y="5" width="4" height="14" rx="1.5" />
+                    </svg>
+                </button>
+                <button onclick="nextTrack()" class="text-apple-textGray hover:text-black dark:hover:text-white active:scale-75 transition">
+                    <svg class="w-7 h-7 fill-current" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                </button>
+            </div>
+
+            <!-- Быстрая кнопка отправки трека в личку -->
+            <div class="pt-2">
+                <button onclick="sendTrackToTelegram()" class="w-full py-3 bg-black/5 dark:bg-white/10 rounded-2xl text-xs font-semibold flex items-center justify-center space-x-2 active:scale-95 transition">
+                    <svg class="w-4 h-4 text-apple-red" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    <span>Скачать полный MP3 (320 kbps) в чат</span>
+                </button>
             </div>
         </div>
     </div>
@@ -344,6 +370,9 @@
     <audio id="audio-engine" preload="none"></audio>
 
     <script>
+        // АДРЕС БЭКЕНДА НА РЕНДЕРЕ (замените при необходимости на свой точный Render URL)
+        const BACKEND_URL = "https://nomusicbot.onrender.com";
+
         const tg = window.Telegram?.WebApp;
         if (tg) {
             tg.ready();
@@ -390,11 +419,10 @@
         async function loadTrendingReleases(force = false) {
             const carousel = document.getElementById('releases-carousel');
             if (force) {
-                carousel.innerHTML = '<div class="text-xs text-apple-textGray py-8 px-2 flex items-center space-x-2"><span class="animate-spin text-sm">⏳</span><span>Загрузка свежего чарта...</span></div>';
+                carousel.innerHTML = '<div class="text-xs text-apple-textGray py-8 px-2 flex items-center space-x-2"><span class="animate-spin text-sm">⏳</span><span>Загрузка чарта...</span></div>';
             }
 
             try {
-                // Подтягиваем реальные популярные композиции российского региона Apple Storefront
                 const resp = await fetch('https://itunes.apple.com/search?term=хиты&country=ru&entity=song&limit=12');
                 const data = await resp.json();
                 
@@ -515,54 +543,78 @@
             performSearch('');
         }
 
+        // Поиск через бэкенд бота с автоматической подстраховкой
         async function performSearch(query) {
             const list = document.getElementById('search-list');
             if (!query) {
-                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Введите название трека или имя артиста.<br>Поиск подключен напрямую к лицензионной витрине.</div>`;
+                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Введите название трека или имя артиста.<br>Поиск подключен напрямую к алгоритмам бота.</div>`;
                 return;
             }
 
             list.innerHTML = `<div class="text-center py-12 text-apple-textGray text-xs animate-pulse">Поиск по каталогу...</div>`;
 
+            let tracks = [];
+
+            // 1. Попытка запросить бэкенд бота
             try {
-                const resp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=ru&entity=song&limit=15`);
-                const data = await resp.json();
-                
-                if (!data.results || data.results.length === 0) {
-                    list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Ничего не найдено 🥲<br>Попробуйте изменить запрос.</div>`;
-                    return;
-                }
-
-                list.innerHTML = '';
-                data.results.forEach(item => {
-                    const track = {
-                        id: String(item.trackId),
-                        title: item.trackName,
-                        artist: item.artistName,
-                        cover: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x400bb') : '',
-                        audio: item.previewUrl,
-                        duration: 30
-                    };
-
-                    const row = document.createElement('div');
-                    row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
-                    row.innerHTML = `
-                        <div class="flex items-center space-x-3 overflow-hidden">
-                            <img src="${track.cover}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
-                            <div class="truncate">
-                                <h4 class="font-bold text-xs truncate">${track.title}</h4>
-                                <p class="text-[11px] text-apple-textGray truncate">${track.artist}</p>
-                            </div>
-                        </div>
-                        <button class="w-8 h-8 rounded-full bg-apple-red/10 text-apple-red flex items-center justify-center font-bold text-xs">▶</button>
-                    `;
-                    row.onclick = () => playSong(track);
-                    list.appendChild(row);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2500);
+                const bResp = await fetch(`${BACKEND_URL}/api/search?q=${encodeURIComponent(query)}&mode=${activeSearchMode}`, {
+                    signal: controller.signal
                 });
-
-            } catch (err) {
-                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Ошибка при загрузке треков</div>`;
+                clearTimeout(timeoutId);
+                if (bResp.ok) {
+                    const bData = await bResp.json();
+                    if (bData && bData.results && bData.results.length > 0) {
+                        tracks = bData.results;
+                    }
+                }
+            } catch (backendErr) {
+                // Если Render засыпает — срабатывает прямой клиентский фоллбэк
             }
+
+            // 2. Фоллбэк: прямой запрос к Apple Music витрине
+            if (tracks.length === 0) {
+                try {
+                    const resp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=ru&entity=song&limit=15`);
+                    const data = await resp.json();
+                    if (data.results && data.results.length > 0) {
+                        tracks = data.results.map(item => ({
+                            id: String(item.trackId),
+                            title: item.trackName,
+                            artist: item.artistName,
+                            cover: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x400bb') : '',
+                            audio: item.previewUrl,
+                            duration: 30
+                        }));
+                    }
+                } catch (fallbackErr) {}
+            }
+
+            if (tracks.length === 0) {
+                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Ничего не найдено 🥲<br>Попробуйте изменить запрос.</div>`;
+                return;
+            }
+
+            list.innerHTML = '';
+            tracks.forEach(track => {
+                const row = document.createElement('div');
+                row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
+                row.innerHTML = `
+                    <div class="flex items-center space-x-3 overflow-hidden">
+                        <img src="${track.cover || 'https://placehold.co/100x100/1C1C1E/FFFFFF?text=NM'}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
+                        <div class="truncate">
+                            <h4 class="font-bold text-xs truncate">${track.title}</h4>
+                            <p class="text-[11px] text-apple-textGray truncate">${track.artist || track.uploader || 'Артист'}</p>
+                        </div>
+                    </div>
+                    <button class="w-8 h-8 rounded-full bg-apple-red/10 text-apple-red flex items-center justify-center font-bold text-xs">
+                        <svg class="w-3.5 h-3.5 fill-current ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    </button>
+                `;
+                row.onclick = () => playSong(track);
+                list.appendChild(row);
+            });
         }
 
         function setLibraryTab(tab) {
@@ -587,7 +639,7 @@
             const list = currentLibTab === 'favs' ? favorites : history;
 
             if (list.length === 0) {
-                container.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">${currentLibTab === 'favs' ? 'В избранном пока пусто ❤' : 'История пуста 📜'}</div>`;
+                container.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">${currentLibTab === 'favs' ? 'В избранном пока пусто ❤️' : 'История пуста 📜'}</div>`;
                 return;
             }
 
@@ -596,13 +648,15 @@
                 row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
                 row.innerHTML = `
                     <div class="flex items-center space-x-3 overflow-hidden">
-                        <img src="${track.cover}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
+                        <img src="${track.cover || ''}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
                         <div class="truncate">
                             <h4 class="font-bold text-xs truncate">${track.title}</h4>
-                            <p class="text-[11px] text-apple-textGray truncate">${track.artist}</p>
+                            <p class="text-[11px] text-apple-textGray truncate">${track.artist || track.uploader || 'Артист'}</p>
                         </div>
                     </div>
-                    <button class="text-apple-red text-sm font-bold">▶</button>
+                    <button class="w-7 h-7 rounded-full bg-apple-red/10 text-apple-red flex items-center justify-center font-bold text-xs">
+                        <svg class="w-3.5 h-3.5 fill-current ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    </button>
                 `;
                 row.onclick = () => playSong(track);
                 container.appendChild(row);
@@ -619,11 +673,11 @@
             const mini = document.getElementById('mini-player-bar');
             mini.classList.remove('hidden');
             document.getElementById('mini-player-title').innerText = track.title;
-            document.getElementById('mini-player-artist').innerText = track.artist;
+            document.getElementById('mini-player-artist').innerText = track.artist || track.uploader || 'Артист';
             document.getElementById('mini-player-cover').src = track.cover;
 
             document.getElementById('full-title').innerText = track.title;
-            document.getElementById('full-artist').innerText = track.artist;
+            document.getElementById('full-artist').innerText = track.artist || track.uploader || 'Артист';
             document.getElementById('full-cover').src = track.cover;
             updateFavIcon();
 
@@ -651,9 +705,24 @@
             updatePlayButtons();
         }
 
+        // Обновление векторных SVG кнопок Play/Pause
         function updatePlayButtons() {
-            document.getElementById('mini-play-btn').innerText = isPlaying ? '⏸' : '▶';
-            document.getElementById('full-play-btn').innerText = isPlaying ? '⏸' : '▶';
+            const miniPlay = document.getElementById('mini-icon-play');
+            const miniPause = document.getElementById('mini-icon-pause');
+            const fullPlay = document.getElementById('full-icon-play');
+            const fullPause = document.getElementById('full-icon-pause');
+
+            if (isPlaying) {
+                miniPlay.classList.add('hidden');
+                miniPause.classList.remove('hidden');
+                fullPlay.classList.add('hidden');
+                fullPause.classList.remove('hidden');
+            } else {
+                miniPlay.classList.remove('hidden');
+                miniPause.classList.add('hidden');
+                fullPlay.classList.remove('hidden');
+                fullPause.classList.add('hidden');
+            }
         }
 
         audio.ontimeupdate = () => {
@@ -714,7 +783,25 @@
         function updateFavIcon() {
             if (!currentTrack) return;
             const exists = favorites.some(t => t.id === currentTrack.id);
-            document.getElementById('full-fav-btn').innerText = exists ? '❤️' : '🤍';
+            const icon = document.getElementById('full-fav-icon');
+            if (exists) {
+                icon.setAttribute('class', 'w-6 h-6 fill-apple-red stroke-apple-red');
+            } else {
+                icon.setAttribute('class', 'w-6 h-6 fill-none stroke-apple-textGray');
+            }
+        }
+
+        // Отправка запроса в Telegram на скачивание полного 320 kbps трека
+        function sendTrackToTelegram() {
+            if (!currentTrack) return;
+            haptic('medium');
+            const queryText = `${currentTrack.artist || currentTrack.uploader || ''} - ${currentTrack.title}`;
+            
+            if (tg?.sendData) {
+                tg.sendData(JSON.stringify({ action: "download_track", query: queryText, id: currentTrack.id }));
+            } else {
+                window.open(`https://t.me/share/url?url=${encodeURIComponent(queryText)}`, '_blank');
+            }
         }
 
         loadTrendingReleases();
