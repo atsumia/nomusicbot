@@ -157,11 +157,9 @@ def format_ym_track(track):
     }
 
 def deduplicate_tracks(tracks: list) -> list:
-    """Удаляет полные клоны из выдачи, оставляя только уникальные треки"""
     seen = set()
     unique = []
     for t in tracks:
-        # Уникальный ключ: Артист + Название (в нижнем регистре без лишних пробелов)
         key = f"{t.get('uploader', '').strip().lower()} - {t.get('title', '').strip().lower()}"
         if key not in seen:
             seen.add(key)
@@ -170,8 +168,7 @@ def deduplicate_tracks(tracks: list) -> list:
 
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
-    if not client:
-        return []
+    if not client: return []
 
     queries = get_search_queries(query)
     all_tracks = []
@@ -179,18 +176,27 @@ async def search_yandex(query: str, limit: int = 15):
     for q in queries:
         try:
             sr = await client.search(text=q, type_='all', page=0)
-            if not sr:
-                continue
+            if not sr: continue
+            
+            found_something = False
 
-            if sr.tracks and sr.tracks.results:
-                raw_tracks = [format_ym_track(t) for t in sr.tracks.results]
-                all_tracks.extend(raw_tracks)
+            # Если Яндекс выдал точное совпадение (Best match), принудительно ставим его ПЕРВЫМ
+            if getattr(sr, 'best', None) and sr.best.type == 'track':
+                all_tracks.append(format_ym_track(sr.best.result))
+                found_something = True
+
+            # Затем добавляем остальные релевантные треки
+            if getattr(sr, 'tracks', None) and sr.tracks.results:
+                all_tracks.extend([format_ym_track(t) for t in sr.tracks.results])
+                found_something = True
+
+            if found_something:
                 break 
 
+            # Страховочный поиск чисто по трекам
             tr_sr = await client.search(text=q, type_='track', page=0)
-            if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
-                raw_tracks = [format_ym_track(t) for t in tr_sr.tracks.results]
-                all_tracks.extend(raw_tracks)
+            if getattr(tr_sr, 'tracks', None) and tr_sr.tracks.results:
+                all_tracks.extend([format_ym_track(t) for t in tr_sr.tracks.results])
                 break
                 
         except Exception as e:
@@ -199,7 +205,6 @@ async def search_yandex(query: str, limit: int = 15):
     return deduplicate_tracks(all_tracks)[:limit]
 
 async def get_ym_album_tracks(album_id: int):
-    """Получает все треки из конкретного альбома Яндекс Музыки"""
     client = await get_ym_client()
     if not client: return []
     try:
@@ -215,7 +220,6 @@ async def get_ym_album_tracks(album_id: int):
     return []
 
 async def get_ym_artist_top(artist_id: int):
-    """Получает самые популярные треки артиста"""
     client = await get_ym_client()
     if not client: return []
     try:
@@ -238,6 +242,8 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     artists = ", ".join([a.name for a in track.artists if a.name])
     title = track.title
     duration = int(track.duration_ms / 1000) if track.duration_ms else 0
+    artist_id = track.artists[0].id if track.artists else None
+    album_id = track.albums[0].id if track.albums else None
 
     mp3_path = os.path.join(output_dir, f"ym_{track_id}.mp3")
     cover_raw_path = os.path.join(output_dir, f"ym_{track_id}_raw.jpg")
@@ -284,7 +290,9 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         'thumb_path': thumb_path,
         'title': title,
         'artist': artists,
-        'duration': duration
+        'duration': duration,
+        'artist_id': artist_id,
+        'album_id': album_id
     }
 
 def search_sc_sync(query: str, limit: int = 15):
@@ -308,20 +316,16 @@ def search_sc_sync(query: str, limit: int = 15):
     results = []
     seen_ids = set()
     for entry in entries:
-        if not entry:
-            continue
+        if not entry: continue
         eid = str(entry.get('id'))
-        if eid in seen_ids:
-            continue
+        if eid in seen_ids: continue
         seen_ids.add(eid)
 
         url = entry.get('url') or entry.get('webpage_url')
-        if not url:
-            continue
+        if not url: continue
         
         raw_title = entry.get('title', 'Без названия')
         raw_uploader = entry.get('uploader') or 'Неизвестный автор'
-        
         parsed_artist, parsed_title = parse_sc_title_and_artist(raw_title, raw_uploader)
 
         results.append({
@@ -382,7 +386,6 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
 
                 orig_context = f"{raw_title} {raw_uploader} {final_title} {final_artist}".lower()
                 shazam_words = re.findall(r'[a-zA-Zа-яА-ЯёЁ0-9]{3,}', f"{shazam_title} {shazam_artist}".lower())
-
                 has_match = any(w in orig_context for w in shazam_words) if shazam_words else False
 
                 if has_match:
@@ -416,17 +419,13 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
             possible = f"{base_path}{ext}"
             if os.path.exists(possible):
                 thumb_path = prepare_telegram_cover(possible, cover_file)
-                try:
-                    os.remove(possible)
-                except Exception:
-                    pass
+                try: os.remove(possible)
+                except Exception: pass
                 break
 
     try:
-        try:
-            audio = EasyID3(mp3_path)
-        except Exception:
-            audio = EasyID3()
+        try: audio = EasyID3(mp3_path)
+        except Exception: audio = EasyID3()
         audio['title'] = final_title
         audio['artist'] = final_artist
         audio.save(mp3_path)
@@ -435,13 +434,7 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
             with open(thumb_path, 'rb') as f:
                 img_data = f.read()
             id3 = ID3(mp3_path)
-            id3.add(APIC(
-                encoding=3,
-                mime='image/jpeg',
-                type=3,
-                desc='Cover',
-                data=img_data
-            ))
+            id3.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=img_data))
             id3.save()
     except Exception:
         pass
@@ -451,7 +444,9 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'thumb_path': thumb_path,
         'title': final_title,
         'artist': final_artist,
-        'duration': int(raw_info.get('duration', 0))
+        'duration': int(raw_info.get('duration', 0)),
+        'artist_id': None,
+        'album_id': None
     }
 
 async def get_direct_stream_url(url: str) -> str:
