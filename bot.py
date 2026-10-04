@@ -256,7 +256,6 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         fallback_triggered = False
         results = await search_tracks(query, mode=user_mode, limit=15)
         
-        # Если Яндекс Музыка ничего не отдала (из-за иноагента или сложного названия)
         if not results and user_mode == "official":
             results = await search_tracks(query, mode="remix", limit=15)
             if results:
@@ -278,7 +277,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         kb = build_search_keyboard(user_id, page=0)
         
         if fallback_triggered:
-            text = "⚠️ <b>В Яндекс.Музыке по этому запросу ничего не найдено.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
+            text = "⚠️ <b>В Яндекс.Музыке трек не найден.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
         else:
             mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
             text = f"Результаты: <b>{mode_title}</b>"
@@ -485,6 +484,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
     thumb_path = None
     try:
         await status_msg.edit_text("⏳ Загружаю аудиозапись...")
+        # При скачивании трека из Яндекса мы получаем полный объект с актуальными ID
         track = await download_track(url)
         file_path = track['file_path']
         thumb_path = track.get('thumb_path')
@@ -501,13 +501,14 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         kb_buttons = []
         smart_row = []
         
-        # Гарантированное добавление кнопок Альбома и Артиста
-        a_id = artist_id if artist_id else track.get('artist_id')
-        al_id = album_id if album_id else track.get('album_id')
+        # Надежное извлечение идентификаторов: сначала из самого трека, затем из сессии поиска
+        a_id = track.get('artist_id') or artist_id
+        al_id = track.get('album_id') or album_id
 
-        if al_id and str(al_id) != "None":
+        # Формируем умные кнопки, если это трек с официальных площадок
+        if al_id and str(al_id).strip() not in ["None", ""]:
             smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{al_id}"))
-        if a_id and str(a_id) != "None":
+        if a_id and str(a_id).strip() not in ["None", ""]:
             smart_row.append(InlineKeyboardButton(text="👤 Топ артиста", callback_data=f"artist_top:{a_id}"))
             
         if smart_row:
