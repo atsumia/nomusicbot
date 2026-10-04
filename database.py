@@ -10,7 +10,6 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
     
-    # Таблица пользователей
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -20,7 +19,6 @@ def init_db():
         )
     ''')
 
-    # Таблица загрузок и истории
     c.execute('''
         CREATE TABLE IF NOT EXISTS downloads (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,7 +32,6 @@ def init_db():
         )
     ''')
 
-    # Таблица избранного
     c.execute('''
         CREATE TABLE IF NOT EXISTS favorites (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +46,6 @@ def init_db():
         )
     ''')
 
-    # Безопасное добавление колонки telegram_file_id, если таблицы уже были созданы
     try:
         c.execute("ALTER TABLE downloads ADD COLUMN telegram_file_id TEXT")
     except Exception:
