@@ -62,7 +62,6 @@ def get_search_queries(raw_query: str) -> list:
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
     tag_detected = None
-    # Более точные паттерны для выявления версий
     tag_patterns = [
         (r'\b(slowed\s*(?:\+|&|and)\s*reverb)\b', 'slowed + reverb'),
         (r'\b(slowed)\b', 'slowed'),
@@ -76,15 +75,14 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
             tag_detected = label
             break
 
-    # Список мусора для удаления. Теперь удаляем и версии без скобок, чтобы не было дублей!
     trash = [
         r'\[.*?\]', 
         r'\(.*?official.*?\)', 
         r'\(.*?audio.*?\)',
         r'\(.*?prod\..*?\)', 
-        r'\(.*?(slowed|sped up|speed up|reverb|remix).*?\)', # Удаляем версию внутри скобок
-        r'\b(slowed\s*(?:\+|&|and)\s*reverb)\b',              # Удаляем сложный тег просто в тексте
-        r'\b(slowed|sped up|speed up|reverb|remix)\b',        # Удаляем простые теги просто в тексте
+        r'\(.*?(slowed|sped up|speed up|reverb|remix).*?\)',
+        r'\b(slowed\s*(?:\+|&|and)\s*reverb)\b',
+        r'\b(slowed|sped up|speed up|reverb|remix)\b',
         r't\.me/\S+', 
         r'vk\.com/\S+'
     ]
@@ -93,18 +91,12 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
     for p in trash:
         temp_cleaned = re.sub(p, '', temp_cleaned, flags=re.IGNORECASE)
 
-    # Очищаем пустые скобки, лишние пробелы и тире, оставшиеся после вырезания слов
     temp_cleaned = re.sub(r'\(\s*\)', '', temp_cleaned)
     temp_cleaned = re.sub(r'\s+', ' ', temp_cleaned).strip()
     temp_cleaned = re.sub(r'[-–—]\s*$', '', temp_cleaned).strip()
 
-    # Защита: если после очистки от тегов название стало полностью пустым, возвращаем оригинал
-    if temp_cleaned:
-        cleaned = temp_cleaned
-    else:
-        cleaned = raw_title
+    cleaned = temp_cleaned if temp_cleaned else raw_title
 
-    # Разбиваем на Исполнителя и Название
     parts = re.split(r'\s*[-–—]\s*', cleaned, maxsplit=1)
     if len(parts) == 2 and parts[0].strip() and parts[1].strip():
         base_artist = parts[0].strip()
@@ -113,19 +105,16 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
         base_artist = uploader.strip()
         base_title = cleaned.strip()
 
-    # Проверяем регистр первого буквенного символа в названии
     first_letter_match = re.search(r'[a-zA-Zа-яА-ЯёЁ]', base_title)
     is_lower = False
     if first_letter_match:
         is_lower = first_letter_match.group(0).islower()
 
-    # Формируем суффикс версии ровно 1 раз и в скобках
     tag_suffix = ""
     if tag_detected:
         if is_lower:
             formatted_tag = tag_detected.lower()
         else:
-            # Делаем заглавными каждое слово (например, Slowed + Reverb)
             formatted_tag = " + ".join([w.strip().capitalize() for w in tag_detected.split('+')])
         tag_suffix = f" ({formatted_tag})"
 
@@ -150,6 +139,10 @@ def prepare_telegram_cover(raw_img_path: str, output_path: str):
 
 def format_ym_track(track):
     artists = ", ".join([a.name for a in track.artists if a.name])
+    artist_id = track.artists[0].id if track.artists else None
+    album_id = track.albums[0].id if track.albums else None
+    album_title = track.albums[0].title if track.albums else None
+    
     return {
         'id': f"ym_{track.id}",
         'raw_id': str(track.id),
@@ -157,8 +150,23 @@ def format_ym_track(track):
         'uploader': artists or "Артист",
         'url': f"ym://{track.id}",
         'duration_ms': track.duration_ms or 0,
-        'duration': int(track.duration_ms / 1000) if track.duration_ms else 0
+        'duration': int(track.duration_ms / 1000) if track.duration_ms else 0,
+        'artist_id': artist_id,
+        'album_id': album_id,
+        'album_title': album_title
     }
+
+def deduplicate_tracks(tracks: list) -> list:
+    """Удаляет полные клоны из выдачи, оставляя только уникальные треки"""
+    seen = set()
+    unique = []
+    for t in tracks:
+        # Уникальный ключ: Артист + Название (в нижнем регистре без лишних пробелов)
+        key = f"{t.get('uploader', '').strip().lower()} - {t.get('title', '').strip().lower()}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(t)
+    return unique
 
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
@@ -166,6 +174,7 @@ async def search_yandex(query: str, limit: int = 15):
         return []
 
     queries = get_search_queries(query)
+    all_tracks = []
 
     for q in queries:
         try:
@@ -173,51 +182,49 @@ async def search_yandex(query: str, limit: int = 15):
             if not sr:
                 continue
 
-            is_artist_search = False
-            artist_name = q.title()
-            cover_url = None
-
-            if sr.best and sr.best.type == 'artist':
-                is_artist_search = True
-                artist_name = sr.best.result.name
-                if sr.best.result.cover and sr.best.result.cover.uri:
-                    cover_url = f"https://{sr.best.result.cover.uri.replace('%%', '400x400')}"
-
-            if sr.artists and sr.artists.results:
-                art = sr.artists.results[0]
-                art_name_lower = art.name.lower()
-                q_lower = q.lower()
-                
-                if q_lower == art_name_lower or q_lower in art_name_lower.split():
-                    is_artist_search = True
-                
-                if is_artist_search and not cover_url:
-                    artist_name = art.name
-                    if art.cover and art.cover.uri:
-                        cover_url = f"https://{art.cover.uri.replace('%%', '400x400')}"
-
             if sr.tracks and sr.tracks.results:
-                tracks = [format_ym_track(t) for t in sr.tracks.results[:limit]]
-                
-                if is_artist_search:
-                    if not cover_url and sr.tracks.results[0].cover_uri:
-                        cover_url = f"https://{sr.tracks.results[0].cover_uri.replace('%%', '400x400')}"
-                    return {
-                        'type': 'artist',
-                        'artist_name': artist_name,
-                        'artist_photo': cover_url,
-                        'tracks': tracks
-                    }
-                else:
-                    return tracks
+                raw_tracks = [format_ym_track(t) for t in sr.tracks.results]
+                all_tracks.extend(raw_tracks)
+                break 
 
             tr_sr = await client.search(text=q, type_='track', page=0)
             if tr_sr and tr_sr.tracks and tr_sr.tracks.results:
-                return [format_ym_track(t) for t in tr_sr.tracks.results[:limit]]
-
+                raw_tracks = [format_ym_track(t) for t in tr_sr.tracks.results]
+                all_tracks.extend(raw_tracks)
+                break
+                
         except Exception as e:
             print(f"YM search error for '{q}': {e}")
 
+    return deduplicate_tracks(all_tracks)[:limit]
+
+async def get_ym_album_tracks(album_id: int):
+    """Получает все треки из конкретного альбома Яндекс Музыки"""
+    client = await get_ym_client()
+    if not client: return []
+    try:
+        album = await client.albums_with_tracks(album_id)
+        if album and album.volumes:
+            tracks = []
+            for volume in album.volumes:
+                for t in volume:
+                    tracks.append(format_ym_track(t))
+            return deduplicate_tracks(tracks)
+    except Exception as e:
+        print(f"Album error: {e}")
+    return []
+
+async def get_ym_artist_top(artist_id: int):
+    """Получает самые популярные треки артиста"""
+    client = await get_ym_client()
+    if not client: return []
+    try:
+        artist_info = await client.artists_brief_info(artist_id)
+        if artist_info and artist_info.popular_tracks:
+            raw_tracks = [format_ym_track(t) for t in artist_info.popular_tracks]
+            return deduplicate_tracks(raw_tracks)[:15]
+    except Exception as e:
+        print(f"Artist top error: {e}")
     return []
 
 async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict:
@@ -324,7 +331,7 @@ def search_sc_sync(query: str, limit: int = 15):
             'url': url,
             'duration': entry.get('duration') or 0
         })
-    return results[:limit]
+    return deduplicate_tracks(results)[:limit]
 
 async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     os.makedirs(output_dir, exist_ok=True)
@@ -448,7 +455,6 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     }
 
 async def get_direct_stream_url(url: str) -> str:
-    """Ускоренное получение прямой ссылки на аудиопоток, подготовленной для плеера Telegram"""
     try:
         if url.startswith("ym://"):
             client = await get_ym_client()
@@ -460,13 +466,10 @@ async def get_direct_stream_url(url: str) -> str:
                 mp3_info = [i for i in info if i.codec == 'mp3']
                 best = max(mp3_info, key=lambda x: x.bitrate_in_kbps) if mp3_info else info[0]
                 link = await best.get_direct_link_async()
-                
-                # Маскируем под mp3 для обхода валидации Telegram
                 return f"{link}&ext=.mp3" if "?" in link else f"{link}?ext=.mp3"
         else:
             loop = asyncio.get_event_loop()
             def extract_sc_stream():
-                # skip_download=True исключает тяжелые процессы конвертации при инлайн-вызове
                 ydl_opts = {'format': 'bestaudio', 'quiet': True, 'no_warnings': True, 'skip_download': True}
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     data = ydl.extract_info(url, download=False)
