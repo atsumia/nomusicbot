@@ -63,25 +63,17 @@ MAX_CACHE_SIZE = 500
 DYNAMIC_ALIASES_CACHE = {}
 
 async def resolve_dynamic_query(query: str) -> str:
-    """
-    Интеллектуальная нормализация запроса с использованием iTunes API.
-    Автоматически переводит кириллицу (например, "капсайз") в официальные названия ("cupsize").
-    Включает защиту от переполнения памяти и IP-блокировок.
-    """
     if not query:
         return ""
         
     query_lower = query.strip().lower()
     
-    # 1. Локальный словарь для топовых артистов (мгновенный ответ)
     if query_lower in ARTIST_ALIASES:
         return ARTIST_ALIASES[query_lower]
         
-    # 2. Проверка динамического кэша
     if query_lower in DYNAMIC_ALIASES_CACHE:
         return DYNAMIC_ALIASES_CACHE[query_lower]
 
-    # 3. Запрос к iTunes API с защитными заголовками и таймаутом
     safe_term = urllib.parse.quote(query)
     url = f"https://itunes.apple.com/search?term={safe_term}&entity=song&limit=1"
     
@@ -91,7 +83,6 @@ async def resolve_dynamic_query(query: str) -> str:
     }
     
     try:
-        # Таймаут в 2 секунды, чтобы бот не "висел" при проблемах с сетью на Render
         timeout = aiohttp.ClientTimeout(total=2.0)
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             async with session.get(url) as resp:
@@ -100,16 +91,13 @@ async def resolve_dynamic_query(query: str) -> str:
                     if data.get('results'):
                         official_artist = data['results'][0].get('artistName', query)
                         
-                        # Контроль лимита оперативной памяти
                         if len(DYNAMIC_ALIASES_CACHE) >= MAX_CACHE_SIZE:
-                            # Удаляем самую старую запись из словаря
                             first_key = next(iter(DYNAMIC_ALIASES_CACHE))
                             del DYNAMIC_ALIASES_CACHE[first_key]
                             
                         DYNAMIC_ALIASES_CACHE[query_lower] = official_artist
                         return official_artist
     except Exception as e:
-        # При любых сбоях API (блокировка IP, таймаут) тихо возвращаем оригинальный запрос
         print(f"iTunes API Fallback triggered for '{query}': {e}")
         
     return query
@@ -230,7 +218,24 @@ def deduplicate_tracks(tracks: list) -> list:
             unique.append(t)
     return unique
 
-async def search_yandex(query: str, limit: int = 15):
+def strict_text_filter(tracks: list, original_query: str, normalized_query: str) -> list:
+    filtered = []
+    
+    orig_words = set(re.findall(r'\b\w{3,}\b', original_query.lower()))
+    norm_words = set(re.findall(r'\b\w{3,}\b', normalized_query.lower()))
+    check_words = orig_words.union(norm_words)
+    
+    if not check_words:
+        return tracks 
+        
+    for t in tracks:
+        track_text = f"{t.get('uploader', '')} {t.get('title', '')}".lower()
+        if any(word in track_text for word in check_words):
+            filtered.append(t)
+            
+    return filtered
+
+async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
     client = await get_ym_client()
     if not client: 
         return []
@@ -240,25 +245,40 @@ async def search_yandex(query: str, limit: int = 15):
     try:
         sr = await client.search(text=query, type_='all', page=0)
         if sr:
-            # 1. Если Яндекс определяет артиста — отдаем его официальные популярные треки
-            if getattr(sr, 'best', None) and getattr(sr.best, 'type', None) == 'artist':
-                art_id = sr.best.result.id
-                artist_info = await client.artists_brief_info(art_id)
-                if artist_info and getattr(artist_info, 'popular_tracks', None):
-                    all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+            artist_found = False
 
-            # 2. Если точное совпадение с треком
-            elif getattr(sr, 'best', None) and getattr(sr.best, 'type', None) == 'track':
-                all_tracks.append(format_ym_track(sr.best.result))
+            # 1. Приоритетный поиск официального профиля артиста
+            if getattr(sr, 'artists', None) and getattr(sr.artists, 'results', None):
+                for artist in sr.artists.results:
+                    if artist.name and artist.name.lower() == query.lower():
+                        artist_info = await client.artists_brief_info(artist.id)
+                        if artist_info and getattr(artist_info, 'popular_tracks', None):
+                            all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+                            artist_found = True
+                        break 
 
-            # 3. Добавляем треки из основной поисковой выдачи
+            # 2. Если точный профиль не найден, проверяем блок best
+            if not artist_found and getattr(sr, 'best', None):
+                if getattr(sr.best, 'type', None) == 'artist':
+                    art_id = sr.best.result.id
+                    artist_info = await client.artists_brief_info(art_id)
+                    if artist_info and getattr(artist_info, 'popular_tracks', None):
+                        all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+                elif getattr(sr.best, 'type', None) == 'track':
+                    all_tracks.append(format_ym_track(sr.best.result))
+
+            # 3. Основная поисковая выдача
             if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
                 all_tracks.extend([format_ym_track(t) for t in sr.tracks.results])
 
     except Exception as e:
         print(f"YM search error for '{query}': {e}")
 
-    return deduplicate_tracks(all_tracks)[:limit]
+    unique_tracks = deduplicate_tracks(all_tracks)
+    query_to_check = original_query if original_query else query
+    filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
+
+    return filtered_tracks[:limit]
 
 async def get_ym_album_tracks(album_id: str):
     client = await get_ym_client()
@@ -530,24 +550,19 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     }
 
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
-    # 1. Пропускаем запрос через универсальный нормализатор (iTunes API + Локальный кэш)
     normalized_query = await resolve_dynamic_query(query)
     
-    search_queries = [normalized_query]
-    # Если нормализация изменила запрос (например, "капсайз" -> "cupsize"), сохраняем оригинал как резерв
-    if query.strip().lower() != normalized_query.lower():
-        search_queries.append(query.strip())
-        
     if mode == "official":
-        ym_results = []
-        for q in search_queries:
-            ym_results = await search_yandex(q, limit=limit)
-            if ym_results:
-                return ym_results
+        ym_results = await search_yandex(normalized_query, limit=limit, original_query=query)
+        
+        if not ym_results and query.strip().lower() != normalized_query.lower():
+            ym_results = await search_yandex(query.strip(), limit=limit, original_query=query)
+            
+        if ym_results:
+            return ym_results
 
-    # Поиск в SoundCloud (используем только первый, самый точный вариант запроса)
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, search_sc_sync, search_queries[0], limit)
+    return await loop.run_in_executor(None, search_sc_sync, normalized_query, limit)
 
 async def download_track(url: str) -> dict:
     if url.startswith("ym://"):
