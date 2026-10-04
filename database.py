@@ -1,12 +1,6 @@
 import sqlite3
-import os
 
-# Поддержка постоянных дисков (Persistent Disks) для Render
-DB_DIR = "/data"
-if os.path.exists(DB_DIR):
-    DB_NAME = os.path.join(DB_DIR, "database.db")
-else:
-    DB_NAME = "database.db"
+DB_NAME = "database.db"
 
 def get_connection():
     return sqlite3.connect(DB_NAME)
