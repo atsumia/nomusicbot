@@ -3,27 +3,48 @@ import re
 import aiohttp
 import asyncio
 import urllib.parse
-import yt_dlp
 from PIL import Image
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
 from shazamio import Shazam
 from yandex_music import ClientAsync
+from dotenv import load_dotenv
+import yt_dlp
+
+load_dotenv()
 
 shazam = Shazam()
-YANDEX_TOKEN = os.getenv("YANDEX_MUSIC_TOKEN")
-
 ym_client = None
 
 async def get_ym_client():
     global ym_client
-    if ym_client is None and YANDEX_TOKEN:
-        try:
-            client = ClientAsync(YANDEX_TOKEN)
-            await client.init()
-            ym_client = client
-        except Exception as e:
-            print(f"Yandex Music init error: {e}")
+    if ym_client is not None:
+        return ym_client
+
+    yandex_token = os.getenv("YANDEX_MUSIC_TOKEN") or os.getenv("YANDEX_TOKEN")
+    yandex_proxy = os.getenv("YANDEX_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+
+    if not yandex_token:
+        print("⚠️ [YM]: Токен Яндекс Музыки (YANDEX_MUSIC_TOKEN) не обнаружен в окружении.")
+
+    try:
+        kwargs = {}
+        if yandex_proxy:
+            print(f"🌐 [YM PROXY]: Прокси активирован: {yandex_proxy}")
+            kwargs['proxy'] = yandex_proxy
+
+        if yandex_token:
+            client = ClientAsync(yandex_token.strip(), **kwargs)
+        else:
+            client = ClientAsync(**kwargs)
+
+        await client.init()
+        ym_client = client
+        print("✅ [YM SUCCESS]: Клиент Яндекс Музыки успешно авторизован.")
+    except Exception as e:
+        print(f"❌ [YM INIT ERROR]: Сбой инициализации Яндекс Музыки: {e}")
+        ym_client = None
+
     return ym_client
 
 ARTIST_ALIASES = {
@@ -65,9 +86,6 @@ ARTIST_ALIASES = {
     'серёга пират': 'Серёга Пират'
 }
 
-MAX_CACHE_SIZE = 500
-DYNAMIC_ALIASES_CACHE = {}
-
 def normalize_search_query(query: str) -> str:
     if not query:
         return ""
@@ -80,46 +98,32 @@ def normalize_search_query(query: str) -> str:
         normalized = re.sub(pattern, ARTIST_ALIASES[k], normalized)
     return normalized.strip()
 
-async def resolve_dynamic_query(query: str) -> str:
-    if not query:
-        return ""
-    query_lower = query.strip().lower()
-    if query_lower in ARTIST_ALIASES:
-        return ARTIST_ALIASES[query_lower]
-
-    normalized = normalize_search_query(query)
-    if normalized.lower() != query_lower:
-        return normalized
-
-    if query_lower in DYNAMIC_ALIASES_CACHE:
-        return DYNAMIC_ALIASES_CACHE[query_lower]
-
-    safe_term = urllib.parse.quote(query)
-    url = f"https://itunes.apple.com/search?term={safe_term}&entity=song&limit=1"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json'
-    }
-
+def prepare_telegram_cover(raw_img_path: str, output_path: str):
     try:
-        timeout = aiohttp.ClientTimeout(total=2.0)
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    data = await resp.json(content_type=None)
-                    if data.get('results'):
-                        item = data['results'][0]
-                        artist = item.get('artistName', '')
-                        track = item.get('trackName', '')
-                        resolved = f"{artist} {track}".strip() if (artist and track) else (artist or query)
-                        if len(DYNAMIC_ALIASES_CACHE) >= MAX_CACHE_SIZE:
-                            first_key = next(iter(DYNAMIC_ALIASES_CACHE))
-                            del DYNAMIC_ALIASES_CACHE[first_key]
-                        DYNAMIC_ALIASES_CACHE[query_lower] = resolved
-                        return resolved
-    except Exception as e:
-        print(f"iTunes Fallback for '{query}': {e}")
-    return query
+        with Image.open(raw_img_path) as img:
+            img = img.convert('RGB')
+            w, h = img.size
+            min_dim = min(w, h)
+            left = (w - min_dim) / 2
+            top = (h - min_dim) / 2
+            right = (w + min_dim) / 2
+            bottom = (h + min_dim) / 2
+            img = img.crop((left, top, right, bottom))
+            img.thumbnail((320, 320))
+            img.save(output_path, 'JPEG', quality=85)
+        return output_path
+    except Exception:
+        return None
+
+def deduplicate_tracks(tracks: list) -> list:
+    seen = set()
+    unique = []
+    for t in tracks:
+        key = f"{t.get('uploader', '').strip().lower()} - {t.get('title', '').strip().lower()}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(t)
+    return unique
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
     tag_detected = None
@@ -176,66 +180,6 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
 
     return base_artist, f"{base_title}{tag_suffix}"
 
-def prepare_telegram_cover(raw_img_path: str, output_path: str):
-    try:
-        with Image.open(raw_img_path) as img:
-            img = img.convert('RGB')
-            w, h = img.size
-            min_dim = min(w, h)
-            left = (w - min_dim) / 2
-            top = (h - min_dim) / 2
-            right = (w + min_dim) / 2
-            bottom = (h + min_dim) / 2
-            img = img.crop((left, top, right, bottom))
-            img.thumbnail((320, 320))
-            img.save(output_path, 'JPEG', quality=85)
-        return output_path
-    except Exception:
-        return None
-
-def format_ym_track(track):
-    real_track = getattr(track, 'track', None) or track
-    
-    try:
-        artists = ", ".join([a.name for a in real_track.artists if getattr(a, 'name', None)])
-    except Exception:
-        artists = "Артист"
-
-    artist_id = str(real_track.artists[0].id) if getattr(real_track, 'artists', None) and len(real_track.artists) > 0 else None
-    album_id = None
-    album_title = None
-    if getattr(real_track, 'albums', None) and len(real_track.albums) > 0:
-        album_id = str(real_track.albums[0].id)
-        album_title = str(getattr(real_track.albums[0], 'title', 'Альбом'))
-
-    track_id = getattr(real_track, 'id', None) or getattr(track, 'id', '0')
-    title = getattr(real_track, 'title', None) or getattr(track, 'title', 'Без названия')
-    duration_ms = getattr(real_track, 'duration_ms', 0) or getattr(track, 'duration_ms', 0) or 0
-
-    return {
-        'id': f"ym_{track_id}",
-        'raw_id': str(track_id),
-        'title': title,
-        'uploader': artists or "Артист",
-        'url': f"ym://{track_id}",
-        'duration_ms': duration_ms,
-        'duration': int(duration_ms / 1000),
-        'artist_id': artist_id,
-        'album_id': album_id,
-        'album_title': album_title,
-        'source': 'official'
-    }
-
-def deduplicate_tracks(tracks: list) -> list:
-    seen = set()
-    unique = []
-    for t in tracks:
-        key = f"{t.get('uploader', '').strip().lower()} - {t.get('title', '').strip().lower()}"
-        if key not in seen:
-            seen.add(key)
-            unique.append(t)
-    return unique
-
 def strict_text_filter(tracks: list, original_query: str, normalized_query: str) -> list:
     filtered = []
     def extract_words(text):
@@ -255,256 +199,205 @@ def strict_text_filter(tracks: list, original_query: str, normalized_query: str)
             filtered.append(t)
     return filtered
 
-async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
-    client = await get_ym_client()
-    if not client: 
-        return []
+async def search_apple_catalog(query: str, limit: int = 15):
+    normalized = normalize_search_query(query)
+    term = urllib.parse.quote(normalized)
+    url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&limit={limit * 2}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+    }
 
-    all_tracks = []
+    results = []
     try:
-        sr = await client.search(text=query, type_='all', page=0)
-        if sr:
-            if getattr(sr, 'artists', None) and getattr(sr.artists, 'results', None):
-                for artist in sr.artists.results:
-                    if artist.name and artist.name.lower() == query.lower():
-                        try:
-                            artist_info = await client.artists_brief_info(artist.id)
-                            if artist_info and getattr(artist_info, 'popular_tracks', None):
-                                all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
-                        except Exception:
-                            pass
-                        break 
-
-            if getattr(sr, 'best', None):
-                if getattr(sr.best, 'type', None) == 'artist':
-                    art_id = sr.best.result.id
-                    try:
-                        artist_info = await client.artists_brief_info(art_id)
-                        if artist_info and getattr(artist_info, 'popular_tracks', None):
-                            all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
-                    except Exception:
-                        pass
-                elif getattr(sr.best, 'type', None) == 'track':
-                    all_tracks.append(format_ym_track(sr.best.result))
-
-            if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
-                all_tracks.extend([format_ym_track(t) for t in sr.tracks.results])
-
+        timeout = aiohttp.ClientTimeout(total=4.0)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    for item in data.get('results', []):
+                        if item.get('kind') != 'song':
+                            continue
+                        tid = str(item.get('trackId'))
+                        title = item.get('trackName', 'Без названия')
+                        artist = item.get('artistName', 'Артист')
+                        raw_art = item.get('artworkUrl100', '')
+                        cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
+                        dur_sec = int((item.get('trackTimeMillis') or 0) / 1000)
+                        
+                        params = {
+                            'id': tid,
+                            'title': title,
+                            'artist': artist,
+                            'duration': str(dur_sec),
+                            'cover': cover_hq or '',
+                            'artist_id': str(item.get('artistId', '')),
+                            'album_id': str(item.get('collectionId', '')),
+                            'album_title': item.get('collectionName', '')
+                        }
+                        encoded_url = "am://" + urllib.parse.urlencode(params)
+                        
+                        results.append({
+                            'id': f"am_{tid}",
+                            'raw_id': tid,
+                            'title': title,
+                            'uploader': artist,
+                            'url': encoded_url,
+                            'duration': dur_sec,
+                            'artist_id': str(item.get('artistId', '')) or None,
+                            'album_id': str(item.get('collectionId', '')) or None,
+                            'album_title': item.get('collectionName') or None,
+                            'cover_url': cover_hq,
+                            'source': 'official'
+                        })
     except Exception as e:
-        print(f"YM search error for '{query}': {e}")
+        print(f"❌ [APPLE MUSIC SEARCH ERROR]: {e}")
 
-    unique_tracks = deduplicate_tracks(all_tracks)
-    query_to_check = original_query if original_query else query
-    filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
-    return filtered_tracks[:limit]
+    unique = deduplicate_tracks(results)
+    filtered = strict_text_filter(unique, query, normalized)
+    return filtered[:limit] if filtered else unique[:limit]
 
 async def search_artist_discography(artist_query: str, mode: str = "official", limit: int = 50):
-    normalized_artist = await resolve_dynamic_query(artist_query)
+    normalized_artist = normalize_search_query(artist_query)
     target_name = normalized_artist or artist_query
 
-    # 1. Режим: Только официальные площадки (БЕЗ переходов на SoundCloud)
     if mode == "official":
-        client = await get_ym_client()
-        if not client: 
-            return []
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+        }
+        term = urllib.parse.quote(target_name)
+        artist_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=musicArtist&limit=1"
 
-        all_artist_tracks = []
-        target_artist_id = None
-        target_artist_name = target_name
+        artist_id = None
+        artist_display_name = target_name
 
         try:
-            # А. Поиск через тип 'all'
-            sr_all = await client.search(text=target_name, type_='all', page=0)
-            if not sr_all and target_name.lower() != artist_query.lower():
-                sr_all = await client.search(text=artist_query, type_='all', page=0)
-
-            if sr_all:
-                if getattr(sr_all, 'best', None) and getattr(sr_all.best, 'type', None) == 'artist':
-                    target_artist_id = sr_all.best.result.id
-                    target_artist_name = getattr(sr_all.best.result, 'name', target_name)
-                elif getattr(sr_all, 'artists', None) and getattr(sr_all.artists, 'results', None) and len(sr_all.artists.results) > 0:
-                    target_artist_id = sr_all.artists.results[0].id
-                    target_artist_name = getattr(sr_all.artists.results[0], 'name', target_name)
-                elif getattr(sr_all, 'tracks', None) and getattr(sr_all.tracks, 'results', None) and len(sr_all.tracks.results) > 0:
-                    first_track = sr_all.tracks.results[0]
-                    if getattr(first_track, 'artists', None) and len(first_track.artists) > 0:
-                        target_artist_id = first_track.artists[0].id
-                        target_artist_name = getattr(first_track.artists[0], 'name', target_name)
-
-            # Б. Выгрузка популярных треков по ID
-            if target_artist_id:
-                try:
-                    artist_info = await client.artists_brief_info(int(target_artist_id))
-                    if artist_info and getattr(artist_info, 'popular_tracks', None):
-                        all_artist_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
-                except Exception as e:
-                    print(f"Artist brief info error: {e}")
-
-                try:
-                    more_tracks = await client.artists_tracks(int(target_artist_id), page=0, page_size=limit)
-                    if more_tracks and getattr(more_tracks, 'tracks', None):
-                        for t in more_tracks.tracks:
-                            try:
-                                all_artist_tracks.append(format_ym_track(t))
-                            except Exception:
-                                pass
-                except Exception as e:
-                    print(f"Artist tracks fetch error: {e}")
-
-            # В. Прямой поиск официальных треков исполнителя
-            if len(all_artist_tracks) < 10:
-                try:
-                    sr_tracks = await client.search(text=target_name, type_='track', page=0)
-                    if sr_tracks and getattr(sr_tracks, 'tracks', None) and getattr(sr_tracks.tracks, 'results', None):
-                        all_artist_tracks.extend([format_ym_track(t) for t in sr_tracks.tracks.results])
-                except Exception as e:
-                    print(f"Direct tracks search error: {e}")
-
+            timeout = aiohttp.ClientTimeout(total=4.0)
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(artist_search_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        if data.get('results'):
+                            artist_id = data['results'][0].get('artistId')
+                            artist_display_name = data['results'][0].get('artistName', target_name)
         except Exception as e:
-            print(f"YM Artist discography search error for '{artist_query}': {e}")
+            print(f"Apple Artist ID lookup error: {e}")
 
-        unique_ym = deduplicate_tracks(all_artist_tracks)
-        filtered_ym = strict_text_filter(unique_ym, target_name, artist_query)
-        final_list = filtered_ym if filtered_ym else unique_ym
+        tracks = []
+        if artist_id:
+            lookup_url = f"https://itunes.apple.com/lookup?id={artist_id}&entity=song&limit={limit}&country=ru"
+            try:
+                timeout = aiohttp.ClientTimeout(total=5.0)
+                async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                    async with session.get(lookup_url) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            for item in data.get('results', []):
+                                if item.get('wrapperType') == 'track' and item.get('kind') == 'song':
+                                    tid = str(item.get('trackId'))
+                                    title = item.get('trackName', 'Без названия')
+                                    artist = item.get('artistName', artist_display_name)
+                                    raw_art = item.get('artworkUrl100', '')
+                                    cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
+                                    dur_sec = int((item.get('trackTimeMillis') or 0) / 1000)
+                                    
+                                    params = {
+                                        'id': tid,
+                                        'title': title,
+                                        'artist': artist,
+                                        'duration': str(dur_sec),
+                                        'cover': cover_hq or '',
+                                        'artist_id': str(artist_id),
+                                        'album_id': str(item.get('collectionId', '')),
+                                        'album_title': item.get('collectionName', '')
+                                    }
+                                    encoded_url = "am://" + urllib.parse.urlencode(params)
+                                    
+                                    tracks.append({
+                                        'id': f"am_{tid}",
+                                        'raw_id': tid,
+                                        'title': title,
+                                        'uploader': artist,
+                                        'url': encoded_url,
+                                        'duration': dur_sec,
+                                        'artist_id': str(artist_id),
+                                        'album_id': str(item.get('collectionId', '')) or None,
+                                        'album_title': item.get('collectionName') or None,
+                                        'cover_url': cover_hq,
+                                        'artist_display_name': artist_display_name,
+                                        'source': 'official'
+                                    })
+            except Exception as e:
+                print(f"Apple Lookup tracks error: {e}")
 
-        for t in final_list:
-            t['artist_display_name'] = target_artist_name
-            t['source'] = 'official'
+        if not tracks:
+            tracks = await search_apple_catalog(target_name, limit=limit)
+            for t in tracks:
+                t['artist_display_name'] = artist_display_name
+                t['source'] = 'official'
 
-        return final_list[:limit]
+        return deduplicate_tracks(tracks)[:limit]
 
-    # 2. Режим: Только SoundCloud
     else:
         loop = asyncio.get_event_loop()
         sc_results = await loop.run_in_executor(None, search_sc_sync, target_name, limit, artist_query)
-        if not sc_results and target_name.lower() != artist_query.lower():
-            sc_results = await loop.run_in_executor(None, search_sc_sync, artist_query, limit, artist_query)
-
         for item in sc_results:
             item['artist_display_name'] = target_name
             item['source'] = 'soundcloud'
-
         return sc_results[:limit]
 
-async def get_ym_album_tracks(album_id: str):
-    client = await get_ym_client()
-    if not client: 
-        return []
-    try:
-        album = await client.albums_with_tracks(int(album_id))
-        if album and getattr(album, 'volumes', None):
-            tracks = []
-            album_title = getattr(album, 'title', 'Альбом')
-            for volume in album.volumes:
-                for t in volume:
-                    formatted = format_ym_track(t)
-                    formatted['album_id'] = str(album_id)
-                    formatted['album_title'] = album_title
-                    tracks.append(formatted)
-            return deduplicate_tracks(tracks)
-    except Exception as e:
-        print(f"Album tracks error: {e}")
-    return []
-
-async def get_ym_artist_top(artist_id: str):
-    client = await get_ym_client()
-    if not client: 
-        return []
-    try:
-        tracks = []
-        artist_info = await client.artists_brief_info(int(artist_id))
-        if artist_info and getattr(artist_info, 'popular_tracks', None):
-            tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
-
-        try:
-            more = await client.artists_tracks(int(artist_id), page=0, page_size=50)
-            if more and getattr(more, 'tracks', None):
-                for t in more.tracks:
-                    try:
-                        tracks.append(format_ym_track(t))
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        return deduplicate_tracks(tracks)[:50]
-    except Exception as e:
-        print(f"Artist top error: {e}")
-    return []
-
-async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict:
-    client = await get_ym_client()
-    os.makedirs(output_dir, exist_ok=True)
-
-    full_tracks = await client.tracks_with_info([track_id])
-    if not full_tracks:
-        full_tracks = await client.tracks([track_id])
-    if not full_tracks:
-        raise Exception("Трек не найден на официальных площадках")
-
-    track = full_tracks[0]
-    try:
-        artists = ", ".join([a.name for a in track.artists if getattr(a, 'name', None)])
-    except Exception:
-        artists = "Артист"
-
-    title = track.title or "Без названия"
-    duration = int(track.duration_ms / 1000) if getattr(track, 'duration_ms', None) else 0
-
-    artist_id = str(track.artists[0].id) if getattr(track, 'artists', None) and len(track.artists) > 0 else None
-    album_id = str(track.albums[0].id) if getattr(track, 'albums', None) and len(track.albums) > 0 else None
-    album_title = str(getattr(track.albums[0], 'title', 'Альбом')) if album_id else None
-
-    mp3_path = os.path.join(output_dir, f"ym_{track_id}.mp3")
-    cover_raw_path = os.path.join(output_dir, f"ym_{track_id}_raw.jpg")
-    cover_thumb_path = os.path.join(output_dir, f"ym_{track_id}_thumb.jpg")
-
-    await track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
-
-    thumb_path = None
-    if getattr(track, 'cover_uri', None):
-        try:
-            await track.download_cover_async(filename=cover_raw_path, size='400x400')
-            thumb_path = prepare_telegram_cover(cover_raw_path, cover_thumb_path)
-            if os.path.exists(cover_raw_path):
-                os.remove(cover_raw_path)
-        except Exception:
-            pass
-
-    try:
-        audio = EasyID3(mp3_path)
-    except Exception:
-        audio = EasyID3()
-    audio['title'] = title
-    audio['artist'] = artists
-    audio.save(mp3_path)
-
-    if thumb_path and os.path.exists(thumb_path):
-        try:
-            with open(thumb_path, 'rb') as f:
-                img_data = f.read()
-            id3 = ID3(mp3_path)
-            id3.add(APIC(
-                encoding=3,
-                mime='image/jpeg',
-                type=3,
-                desc='Cover',
-                data=img_data
-            ))
-            id3.save()
-        except Exception:
-            pass
-
-    return {
-        'file_path': mp3_path,
-        'thumb_path': thumb_path,
-        'title': title,
-        'artist': artists,
-        'duration': duration,
-        'artist_id': artist_id,
-        'album_id': album_id,
-        'album_title': album_title
+async def get_am_album_tracks(album_id: str):
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
     }
+    url = f"https://itunes.apple.com/lookup?id={album_id}&entity=song&country=ru"
+    tracks = []
+    try:
+        timeout = aiohttp.ClientTimeout(total=5.0)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    results = data.get('results', [])
+                    album_title = 'Альбом'
+                    for item in results:
+                        if item.get('wrapperType') == 'collection':
+                            album_title = item.get('collectionName', album_title)
+                        elif item.get('wrapperType') == 'track' and item.get('kind') == 'song':
+                            tid = str(item.get('trackId'))
+                            title = item.get('trackName', 'Без названия')
+                            artist = item.get('artistName', 'Артист')
+                            raw_art = item.get('artworkUrl100', '')
+                            cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
+                            dur_sec = int((item.get('trackTimeMillis') or 0) / 1000)
+
+                            params = {
+                                'id': tid,
+                                'title': title,
+                                'artist': artist,
+                                'duration': str(dur_sec),
+                                'cover': cover_hq or '',
+                                'album_id': str(album_id),
+                                'album_title': album_title
+                            }
+                            encoded_url = "am://" + urllib.parse.urlencode(params)
+
+                            tracks.append({
+                                'id': f"am_{tid}",
+                                'title': title,
+                                'uploader': artist,
+                                'url': encoded_url,
+                                'duration': dur_sec,
+                                'album_id': str(album_id),
+                                'album_title': album_title,
+                                'cover_url': cover_hq,
+                                'source': 'official'
+                            })
+    except Exception as e:
+        print(f"Apple Album lookup error: {e}")
+    return deduplicate_tracks(tracks)
 
 def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
     search_opts = {
@@ -553,6 +446,104 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
     filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
     return filtered_tracks[:limit]
 
+async def download_official_track(url_data: str, output_dir: str = "/tmp") -> dict:
+    os.makedirs(output_dir, exist_ok=True)
+    raw_query = url_data.replace("am://", "")
+    params = urllib.parse.parse_qs(raw_query)
+
+    track_id = params.get('id', ['0'])[0]
+    title = params.get('title', ['Трек'])[0]
+    artist = params.get('artist', ['Артист'])[0]
+    duration = int(params.get('duration', ['0'])[0])
+    cover_url = params.get('cover', [''])[0]
+    artist_id = params.get('artist_id', [None])[0]
+    album_id = params.get('album_id', [None])[0]
+    album_title = params.get('album_title', [None])[0]
+
+    mp3_path = os.path.join(output_dir, f"am_{track_id}.mp3")
+    cover_raw_path = os.path.join(output_dir, f"am_{track_id}_raw.jpg")
+    cover_thumb_path = os.path.join(output_dir, f"am_{track_id}_thumb.jpg")
+
+    download_success = False
+
+    client = await get_ym_client()
+    if not client:
+        raise Exception("Официальный музыкальный сервер временно недоступен. Попробуйте режим SoundCloud.")
+
+    try:
+        ym_query = f"{artist} - {title}"
+        sr = await client.search(text=ym_query, type_='track', page=0)
+        if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+            target_ym_track = sr.tracks.results[0]
+            await target_ym_track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
+            download_success = True
+            print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 из официального источника для {ym_query}")
+        else:
+            # Пробуем без дефиса чисто имя + название
+            alt_query = f"{artist} {title}"
+            sr = await client.search(text=alt_query, type_='track', page=0)
+            if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+                target_ym_track = sr.tracks.results[0]
+                await target_ym_track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
+                download_success = True
+                print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 (по alt-запросу) для {alt_query}")
+    except Exception as e:
+        print(f"❌ [YM STREAM ERROR]: Ошибка загрузки из официального каталога: {e}")
+        raise Exception("Не удалось выгрузить аудиозапись с официальной площадки (ограничение прав или региона).")
+
+    if not download_success or not os.path.exists(mp3_path):
+        raise Exception("Аудиозапись не найдена в официальной медиатеке. Попробуй найти её в SoundCloud.")
+
+    thumb_path = None
+    if cover_url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(cover_url) as resp:
+                    if resp.status == 200:
+                        raw_data = await resp.read()
+                        with open(cover_raw_path, "wb") as f:
+                            f.write(raw_data)
+                        thumb_path = prepare_telegram_cover(cover_raw_path, cover_thumb_path)
+                        if os.path.exists(cover_raw_path):
+                            os.remove(cover_raw_path)
+        except Exception:
+            pass
+
+    try:
+        try:
+            audio = EasyID3(mp3_path)
+        except Exception:
+            audio = EasyID3()
+        audio['title'] = title
+        audio['artist'] = artist
+        audio.save(mp3_path)
+
+        if thumb_path and os.path.exists(thumb_path):
+            with open(thumb_path, 'rb') as f:
+                img_data = f.read()
+            id3 = ID3(mp3_path)
+            id3.add(APIC(
+                encoding=3,
+                mime='image/jpeg',
+                type=3,
+                desc='Cover',
+                data=img_data
+            ))
+            id3.save()
+    except Exception:
+        pass
+
+    return {
+        'file_path': mp3_path,
+        'thumb_path': thumb_path,
+        'title': title,
+        'artist': artist,
+        'duration': duration,
+        'artist_id': artist_id,
+        'album_id': album_id,
+        'album_title': album_title
+    }
+
 async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     os.makedirs(output_dir, exist_ok=True)
     temp_template = os.path.join(output_dir, '%(id)s.%(ext)s')
@@ -583,9 +574,9 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         except yt_dlp.utils.DownloadError as e:
             if "DRM protected" in str(e) or "DRM" in str(e):
                 raise Exception("Трек защищен правообладателем (DRM SoundCloud Premium) и недоступен для скачивания 😔")
-            raise Exception("Ошибка загрузки аудиозаписи.")
+            raise Exception("Ошибка загрузки аудиозаписи из SoundCloud.")
         except Exception as e:
-            raise Exception(f"Ошибка загрузки: {str(e)}")
+            raise Exception(f"Ошибка загрузки SoundCloud: {str(e)}")
 
     mp3_path, base_path, raw_info = await loop.run_in_executor(None, run_ydl)
 
@@ -676,22 +667,13 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     }
 
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
-    normalized_query = await resolve_dynamic_query(query)
-    
-    # Режим "Официальные" строго изолирован: никакого fallback на SoundCloud!
     if mode == "official":
-        ym_results = await search_yandex(normalized_query, limit=limit, original_query=query)
-        if not ym_results and query.strip().lower() != normalized_query.lower():
-            ym_results = await search_yandex(query.strip(), limit=limit, original_query=query)
-        return ym_results
-
-    # Режим "SoundCloud" строго изолирован
+        return await search_apple_catalog(query, limit=limit)
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, search_sc_sync, normalized_query, limit, query)
+    return await loop.run_in_executor(None, search_sc_sync, query, limit, query)
 
 async def download_track(url: str) -> dict:
-    if url.startswith("ym://"):
-        track_id = url.replace("ym://", "")
-        return await download_yandex_track(track_id)
+    if url.startswith("am://"):
+        return await download_official_track(url)
     else:
         return await download_sc_track(url)
