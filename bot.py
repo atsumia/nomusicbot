@@ -10,13 +10,15 @@ from aiogram.types import (
     CallbackQuery,
     ReplyKeyboardMarkup,
     KeyboardButton,
-    BotCommand
+    BotCommand,
+    InlineQuery,
+    InlineQueryResultAudio
 )
 from dotenv import load_dotenv
 
 # Подключаем локальные модули
 import database
-from downloader import download_track, search_tracks
+from downloader import download_track, search_tracks, get_direct_stream_url
 from visualizer import generate_apple_card
 
 load_dotenv()
@@ -131,7 +133,7 @@ async def reply_toggle_mode_handler(message: types.Message):
         parse_mode="HTML"
     )
 
-# --- Инлайн-навигация ---
+# --- Инлайн-навигация меню ---
 
 @dp.callback_query(F.data == "menu:main")
 async def show_main_menu(callback: CallbackQuery):
@@ -235,7 +237,7 @@ async def toggle_fav_callback(callback: CallbackQuery):
     await callback.message.edit_reply_markup(reply_markup=kb)
     await callback.answer("Избранное обновлено!")
 
-# --- Логика Поиска и Клавиатур ---
+# --- Логика обычного поиска треков ---
 
 def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
     session = USER_SESSIONS.get(user_id, {})
@@ -397,8 +399,6 @@ async def callback_pagination(callback: CallbackQuery):
 async def callback_noop(callback: CallbackQuery):
     await callback.answer()
 
-# --- Выбор трека и проверка на длительность ---
-
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
     short_id = callback.data.split("dl:")[1]
@@ -438,7 +438,6 @@ async def callback_download(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
     await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
 
-# Подтверждение загрузки длинного трека
 @dp.callback_query(F.data.startswith("confirm_dl:"))
 async def callback_confirm_download(callback: CallbackQuery):
     short_id = callback.data.split("confirm_dl:")[1]
@@ -467,7 +466,6 @@ async def callback_confirm_download(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка подтвержденного трека...")
     await process_and_send_audio(callback.message.chat.id, user_id, item['id'], item['url'], status_msg)
 
-# Возврат к списку при отмене
 @dp.callback_query(F.data == "back_to_results")
 async def callback_back_to_results(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -482,7 +480,6 @@ async def callback_back_to_results(callback: CallbackQuery):
         await callback.message.edit_text(text=f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
-# Скачивание прямо из Истории или Избранного
 @dp.callback_query(F.data.startswith("dl_db:"))
 async def callback_dl_db(callback: CallbackQuery):
     parts = callback.data.split(":")
@@ -499,6 +496,59 @@ async def callback_dl_db(callback: CallbackQuery):
     url, title, artist, track_id = record
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
+
+# --- ИНЛАЙН РЕЖИМ (Работа прямо в сторонних чатах и группах) ---
+
+@dp.inline_query()
+async def inline_search_handler(inline_query: InlineQuery):
+    query = inline_query.query.strip()
+    if not query:
+        return
+
+    # Ищем треки через Яндекс Музыку
+    results = await search_tracks(query, mode="official", limit=8)
+    if not results:
+        return
+
+    is_artist = isinstance(results, dict) and results.get('type') == 'artist'
+    tracks_list = results['tracks'] if is_artist else results
+
+    audio_results = []
+    
+    # Кнопка под аудиосообщением для повторного поиска
+    inline_share_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="🎧 Нажми, чтобы найти песню",
+            switch_inline_query_current_chat=""
+        )
+    ]])
+
+    for item in tracks_list[:6]:
+        try:
+            stream_url = await get_direct_stream_url(item['url'])
+            if not stream_url:
+                continue
+
+            duration = int(float(item.get('duration') or 0))
+            
+            audio_results.append(
+                InlineQueryResultAudio(
+                    id=f"inline_{item['id']}",
+                    audio_url=stream_url,
+                    title=item['title'],
+                    performer=item['uploader'],
+                    audio_duration=duration,
+                    reply_markup=inline_share_kb
+                )
+            )
+        except Exception as e:
+            print(f"Inline track prep error: {e}")
+
+    await inline_query.answer(
+        audio_results,
+        cache_time=120,
+        is_personal=True
+    )
 
 # --- ВЕБ-сервер и запуск ---
 
