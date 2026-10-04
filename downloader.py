@@ -25,40 +25,23 @@ async def get_ym_client():
             print(f"Yandex Music init error: {e}")
     return ym_client
 
-def cyrillic_to_latin(text: str) -> str:
-    phonetic_rules = [
-        (r'дж', 'j'), (r'таг', 'thug'), (r'френдли', 'friendly'),
-        (r'скрип', 'scrip'), (r'клауд', 'cloud'), (r'октобер', 'october'),
-        (r'щ', 'shch'), (r'ш', 'sh'), (r'ч', 'ch'), (r'ц', 'ts'),
-        (r'кс', 'x'), (r'ю', 'yu'), (r'я', 'ya'), (r'ж', 'zh'),
-        (r'х', 'kh'), (r'ай', 'i'), (r'ей', 'ey')
-    ]
-    t = text.lower()
-    for cyr, lat in phonetic_rules:
-        t = re.sub(cyr, lat, t)
-
-    char_map = {
-        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
-        'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
-        'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f',
-        'ы': 'y', 'э': 'e', 'ъ': '', 'ь': ''
-    }
-    return "".join([char_map.get(ch, ch) for ch in t]).strip()
-
-def get_search_queries(raw_query: str) -> list:
-    q = raw_query.strip().lower()
-    variants = [raw_query.strip()]
-    spaced = re.sub(r'(френдли)(таг)', r'\1 \2', q)
-    spaced = re.sub(r'(friendly)(thug)', r'\1 \2', spaced)
-    if spaced not in variants:
-        variants.append(spaced)
-    lat = cyrillic_to_latin(q)
-    if lat not in variants:
-        variants.append(lat)
-    lat_spaced = cyrillic_to_latin(spaced)
-    if lat_spaced not in variants:
-        variants.append(lat_spaced)
-    return variants
+ARTIST_TRANSLATIONS = {
+    'оксимирон': 'oxxxymiron',
+    'окси': 'oxxxymiron',
+    'макан': 'macan',
+    'мияги': 'miyagi',
+    'эндшпиль': 'andy panda',
+    'скриптонит': 'scriptonite',
+    'фараон': 'pharaoh',
+    'тейп': 'big baby tape',
+    'биг бейби тейп': 'big baby tape',
+    'кизару': 'kizaru',
+    'моргенштерн': 'morgenshtern',
+    'френдли таг': 'friendly thug 52 ngg',
+    'лсп': 'лсп',
+    'кино': 'кино',
+    'баста': 'баста'
+}
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
     tag_detected = None
@@ -151,7 +134,7 @@ def format_ym_track(track):
     album_title = None
     if getattr(track, 'albums', None) and len(track.albums) > 0:
         album_id = str(track.albums[0].id)
-        album_title = str(track.albums[0].title)
+        album_title = str(getattr(track.albums[0], 'title', 'Альбом'))
 
     return {
         'id': f"ym_{track.id}",
@@ -177,48 +160,62 @@ def deduplicate_tracks(tracks: list) -> list:
     return unique
 
 async def search_yandex(query: str, limit: int = 15):
-    """Мощный родной поиск Яндекса (без костылей и транслитераций)"""
     client = await get_ym_client()
     if not client: return []
 
-    try:
-        sr = await client.search(text=query, type_='all', page=0)
-        all_tracks = []
-        
-        # 1. Если Яндекс точно определил, что лучший ответ это конкретный трек
-        if getattr(sr, 'best', None) and getattr(sr.best, 'type', None) == 'track':
-            all_tracks.append(format_ym_track(sr.best.result))
-            
-        # 2. Берем список треков, которые выдал Яндекс (они уже идеально отсортированы Яндексом)
-        if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
-            for t in sr.tracks.results:
-                all_tracks.append(format_ym_track(t))
-                
-        # 3. Страховка, если поиск 'all' почему-то не дал треков
-        if not all_tracks:
-            tr_sr = await client.search(text=query, type_='track', page=0)
-            if getattr(tr_sr, 'tracks', None) and getattr(tr_sr.tracks, 'results', None):
-                for t in tr_sr.tracks.results:
-                    all_tracks.append(format_ym_track(t))
+    q_clean = query.strip().lower()
+    search_queries = [query.strip()]
+    
+    # Добавляем английский аналог, если артист введен на русском
+    if q_clean in ARTIST_TRANSLATIONS:
+        search_queries.insert(0, ARTIST_TRANSLATIONS[q_clean])
 
-        return deduplicate_tracks(all_tracks)[:limit]
-    except Exception as e:
-        print(f"YM search error: {e}")
-        return []
+    all_tracks = []
+
+    for q in search_queries:
+        try:
+            sr = await client.search(text=q, type_='all', page=0)
+            if not sr: continue
+
+            # 1. Если запрос распознан как профиль артиста — достаем его популярные треки
+            if getattr(sr, 'best', None) and getattr(sr.best, 'type', None) == 'artist':
+                art_id = sr.best.result.id
+                artist_info = await client.artists_brief_info(art_id)
+                if artist_info and getattr(artist_info, 'popular_tracks', None):
+                    all_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+                    break
+
+            # 2. Если точное совпадение с треком
+            if getattr(sr, 'best', None) and getattr(sr.best, 'type', None) == 'track':
+                all_tracks.append(format_ym_track(sr.best.result))
+
+            # 3. Добавляем треки из результатов поиска
+            if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+                all_tracks.extend([format_ym_track(t) for t in sr.tracks.results])
+                break
+
+        except Exception as e:
+            print(f"YM search error for '{q}': {e}")
+
+    return deduplicate_tracks(all_tracks)[:limit]
 
 async def get_ym_album_tracks(album_id: str):
     client = await get_ym_client()
     if not client: return []
     try:
         album = await client.albums_with_tracks(int(album_id))
-        if album and album.volumes:
+        if album and getattr(album, 'volumes', None):
             tracks = []
+            album_title = getattr(album, 'title', 'Альбом')
             for volume in album.volumes:
                 for t in volume:
-                    tracks.append(format_ym_track(t))
+                    formatted = format_ym_track(t)
+                    formatted['album_id'] = str(album_id)
+                    formatted['album_title'] = album_title
+                    tracks.append(formatted)
             return deduplicate_tracks(tracks)
     except Exception as e:
-        print(f"Album error: {e}")
+        print(f"Album tracks error: {e}")
     return []
 
 async def get_ym_artist_top(artist_id: str):
@@ -249,10 +246,20 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         
     title = track.title or "Без названия"
     duration = int(track.duration_ms / 1000) if getattr(track, 'duration_ms', None) else 0
-    
-    # 100% надежное извлечение ID при прямом скачивании
+
     artist_id = str(track.artists[0].id) if getattr(track, 'artists', None) and len(track.artists) > 0 else None
     album_id = str(track.albums[0].id) if getattr(track, 'albums', None) and len(track.albums) > 0 else None
+    album_title = str(getattr(track.albums[0], 'title', 'Альбом')) if album_id else None
+
+    # Дополнительная проверка альбома, если массив albums был пустым
+    if not album_id:
+        try:
+            full_info = await client.tracks_with_info([track_id])
+            if full_info and full_info[0].albums:
+                album_id = str(full_info[0].albums[0].id)
+                album_title = str(getattr(full_info[0].albums[0], 'title', 'Альбом'))
+        except Exception:
+            pass
 
     mp3_path = os.path.join(output_dir, f"ym_{track_id}.mp3")
     cover_raw_path = os.path.join(output_dir, f"ym_{track_id}_raw.jpg")
@@ -301,12 +308,11 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         'artist': artists,
         'duration': duration,
         'artist_id': artist_id,
-        'album_id': album_id
+        'album_id': album_id,
+        'album_title': album_title
     }
 
 def search_sc_sync(query: str, limit: int = 15):
-    # В SC оставляем транслит-фонетику, так как поиск там ограниченный
-    queries = get_search_queries(query)
     search_opts = {
         'format': 'bestaudio/best',
         'quiet': True,
@@ -316,12 +322,11 @@ def search_sc_sync(query: str, limit: int = 15):
     
     entries = []
     with yt_dlp.YoutubeDL(search_opts) as ydl:
-        for q in queries[:2]:
-            try:
-                res = ydl.extract_info(f"scsearch{limit}:{q}", download=False)
-                entries += res.get('entries', []) or []
-            except Exception:
-                pass
+        try:
+            res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
+            entries = res.get('entries', []) or []
+        except Exception:
+            pass
 
     results = []
     seen_ids = set()
@@ -456,33 +461,9 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'artist': final_artist,
         'duration': int(raw_info.get('duration', 0)),
         'artist_id': None,
-        'album_id': None
+        'album_id': None,
+        'album_title': None
     }
-
-async def get_direct_stream_url(url: str) -> str:
-    try:
-        if url.startswith("ym://"):
-            client = await get_ym_client()
-            if not client: return None
-            track_id = url.replace("ym://", "")
-            tracks = await client.tracks([track_id])
-            if tracks:
-                info = await tracks[0].get_download_info_async()
-                mp3_info = [i for i in info if i.codec == 'mp3']
-                best = max(mp3_info, key=lambda x: x.bitrate_in_kbps) if mp3_info else info[0]
-                link = await best.get_direct_link_async()
-                return f"{link}&ext=.mp3" if "?" in link else f"{link}?ext=.mp3"
-        else:
-            loop = asyncio.get_event_loop()
-            def extract_sc_stream():
-                ydl_opts = {'format': 'bestaudio', 'quiet': True, 'no_warnings': True, 'skip_download': True}
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    data = ydl.extract_info(url, download=False)
-                    return data.get('url')
-            return await loop.run_in_executor(None, extract_sc_stream)
-    except Exception as e:
-        print(f"Stream generation error: {e}")
-        return None
 
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     if mode == "official":
