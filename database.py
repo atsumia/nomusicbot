@@ -171,6 +171,13 @@ ARTIST_ALIASES = {
     'серёга пират': 'Серёга Пират'
 }
 
+def normalize_text_ru(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = text.lower().replace('ё', 'е')
+    cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
+    return re.sub(r'\s+', ' ', cleaned).strip()
+
 def search_cached_tracks(query: str, limit: int = 15):
     conn = get_connection()
     c = conn.cursor()
@@ -183,49 +190,65 @@ def search_cached_tracks(query: str, limit: int = 15):
     rows = c.fetchall()
     conn.close()
 
-    original_q = query.lower().strip()
-    normalized_q = original_q
-    
-    for key, val in ARTIST_ALIASES.items():
-        if key in original_q:
-            normalized_q = re.sub(r'(?i)\b' + re.escape(key) + r'\b', val.lower(), normalized_q)
+    norm_query = normalize_text_ru(query)
+    if not norm_query:
+        return []
 
-    words_orig = set(re.findall(r'\b\w{2,}\b', original_q))
-    words_norm = set(re.findall(r'\b\w{2,}\b', normalized_q))
-    
+    aliased_query = norm_query
+    for key, val in sorted(ARTIST_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
+        pattern = r'\b' + re.escape(normalize_text_ru(key)) + r'\b'
+        aliased_query = re.sub(pattern, normalize_text_ru(val), aliased_query)
+
+    query_variants = list(set([norm_query, aliased_query]))
+    words_sets = [
+        set([w for w in qv.split() if len(w) >= 2])
+        for qv in query_variants
+        if qv
+    ]
+
     results = []
-    
-    for row in rows:
-        track_id, title, artist, file_id = row
-        t_low = (title or "").lower()
-        a_low = (artist or "").lower()
-        combined_text = f"{a_low} {t_low}"
-        
-        match_orig = all(w in combined_text for w in words_orig) if words_orig else (original_q in combined_text)
-        match_norm = all(w in combined_text for w in words_norm) if words_norm else (normalized_q in combined_text)
-        
-        if match_orig or match_norm:
-            results.append(row)
 
-    def sort_key(row):
+    for row in rows:
+        track_id, raw_title, raw_artist, file_id = row
+        title_norm = normalize_text_ru(raw_title)
+        artist_norm = normalize_text_ru(raw_artist)
+        combined_norm = f"{artist_norm} {title_norm}"
+        track_words = set(combined_norm.split())
+
+        matched = False
+        for w_set in words_sets:
+            if not w_set:
+                continue
+            if all(any(tw.startswith(qw) or qw in tw for tw in track_words) or qw in combined_norm for qw in w_set):
+                matched = True
+                break
+
+        if matched:
+            results.append((row, title_norm, artist_norm, combined_norm))
+
+    def sort_key(item):
+        _, t_norm, a_norm, comb_norm = item
         score = 0
-        comb = f"{row[2]} {row[1]}".lower()
-        
-        if normalized_q in comb or original_q in comb: 
-            score += 200
-            
-        for w in words_norm.union(words_orig):
-            if w in comb: 
-                score += 10
-                
-        for w in words_norm.union(words_orig):
-            if w in (row[1] or "").lower():
-                score += 5
-                
+
+        for qv in query_variants:
+            if qv == t_norm or qv == comb_norm:
+                score += 300
+            elif qv in comb_norm:
+                score += 150
+            elif qv in t_norm:
+                score += 100
+
+        for w_set in words_sets:
+            for w in w_set:
+                if w in t_norm:
+                    score += 20
+                if w in a_norm:
+                    score += 10
+
         return score
-        
+
     results.sort(key=sort_key, reverse=True)
-    return results[:limit]
+    return [item[0] for item in results][:limit]
 
 def get_history(user_id: int, limit: int = 5):
     conn = get_connection()
@@ -292,3 +315,46 @@ def get_track_by_db_id(table: str, row_id: str):
     row = c.fetchone()
     conn.close()
     return row
+
+def get_admin_stats() -> dict:
+    conn = get_connection()
+    c = conn.cursor()
+    
+    c.execute("SELECT COUNT(*) FROM users")
+    total_users = c.fetchone()[0]
+
+    c.execute("SELECT COUNT(*) FROM downloads")
+    total_downloads = c.fetchone()[0]
+
+    c.execute("SELECT COUNT(DISTINCT track_id) FROM downloads WHERE telegram_file_id IS NOT NULL")
+    cached_tracks = c.fetchone()[0]
+
+    c.execute("SELECT COUNT(*) FROM favorites")
+    total_favorites = c.fetchone()[0]
+
+    c.execute('''
+        SELECT artist, title, COUNT(*) as cnt 
+        FROM downloads 
+        GROUP BY artist, title 
+        ORDER BY cnt DESC 
+        LIMIT 5
+    ''')
+    top_tracks = c.fetchall()
+
+    conn.close()
+
+    return {
+        'total_users': total_users,
+        'total_downloads': total_downloads,
+        'cached_tracks': cached_tracks,
+        'total_favorites': total_favorites,
+        'top_tracks': top_tracks
+    }
+
+def get_all_user_ids() -> list:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users")
+    rows = c.fetchall()
+    conn.close()
+    return [r[0] for r in rows if r[0]]
