@@ -1,5 +1,9 @@
 import os
 import asyncio
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -16,18 +20,15 @@ from aiogram.types import (
     InlineQueryResultArticle,
     InputTextMessageContent
 )
-from dotenv import load_dotenv
 
 import database
 from downloader import (
     download_track, 
     search_tracks, 
     search_artist_discography,
-    get_ym_album_tracks, 
-    get_ym_artist_top
+    get_am_album_tracks
 )
 
-load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
@@ -498,7 +499,7 @@ async def callback_album(callback: CallbackQuery):
     
     await callback.answer("Загружаю альбом...")
     status_msg = await callback.message.answer("💿 <i>Загружаю треклист альбома...</i>", parse_mode="HTML")
-    tracks = await get_ym_album_tracks(album_id)
+    tracks = await get_am_album_tracks(album_id)
     
     if not tracks:
         await status_msg.edit_text("Не удалось загрузить треки альбома 🥲")
@@ -524,10 +525,10 @@ async def callback_artist_top(callback: CallbackQuery):
     
     await callback.answer("Загружаю дискографию...")
     status_msg = await callback.message.answer("👤 <i>Загружаю дискографию артиста...</i>", parse_mode="HTML")
-    tracks = await get_ym_artist_top(artist_id)
+    tracks = await search_artist_discography(artist_id, mode="official", limit=50)
     
     if not tracks:
-        await status_msg.edit_text("Не удалось загрузить треки артиста 🥲")
+        await status_msg.edit_text("Не удалось загрузить дискографию артиста 🥲")
         return
 
     USER_SESSIONS[user_id] = {
@@ -539,7 +540,7 @@ async def callback_artist_top(callback: CallbackQuery):
         "is_discography": True
     }
     
-    artist_name = tracks[0].get('uploader') or 'Артист'
+    artist_name = tracks[0].get('artist_display_name') or tracks[0].get('uploader') or 'Артист'
     kb = build_search_keyboard(user_id, page=0)
     card_text = (
         f"👤 <b>Артист:</b> {artist_name}\n"
