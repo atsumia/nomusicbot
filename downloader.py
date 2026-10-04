@@ -265,6 +265,106 @@ async def search_apple_catalog(query: str, limit: int = 15):
     filtered = strict_text_filter(unique, query, normalized)
     return filtered[:limit] if filtered else unique[:limit]
 
+async def search_tracks_by_lyrics(query: str, limit: int = 15) -> list:
+    query_clean = query.strip()
+    if not query_clean or len(query_clean) < 2:
+        return []
+
+    async def fetch_lrclib():
+        try:
+            url = f"https://lrclib.net/api/search?q={urllib.parse.quote(query_clean)}"
+            headers = {'User-Agent': 'NoMusicBot/1.0 (Telegram Music Bot)'}
+            timeout = aiohttp.ClientTimeout(total=4.5)
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        if isinstance(data, list):
+                            return [
+                                (item.get('artistName', '').strip(), item.get('trackName', '').strip())
+                                for item in data
+                                if item.get('trackName') and item.get('artistName')
+                            ]
+        except Exception as e:
+            print(f"LRCLIB lyrics lookup error: {e}")
+        return []
+
+    async def fetch_yandex_lyrics():
+        try:
+            client = await get_ym_client()
+            if client:
+                sr = await client.search(text=query_clean, type_='track', page=0)
+                if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+                    res = []
+                    for t in sr.tracks.results:
+                        art = ", ".join([a.name for a in t.artists]) if t.artists else "Артист"
+                        res.append((art.strip(), t.title.strip()))
+                    return res
+        except Exception as e:
+            print(f"YM lyrics lookup error: {e}")
+        return []
+
+    lrclib_res, ym_res = await asyncio.gather(fetch_lrclib(), fetch_yandex_lyrics(), return_exceptions=True)
+
+    candidates = []
+    seen_candidates = set()
+
+    for candidate_list in [ym_res, lrclib_res]:
+        if isinstance(candidate_list, list):
+            for art, tit in candidate_list:
+                if not art or not tit:
+                    continue
+                pair_norm = (normalize_text_ru(art), normalize_text_ru(tit))
+                if pair_norm not in seen_candidates:
+                    seen_candidates.add(pair_norm)
+                    candidates.append((art, tit))
+
+    if not candidates:
+        return await search_apple_catalog(query_clean, limit=limit)
+
+    lookup_tasks = []
+    for art, tit in candidates[:8]:
+        lookup_tasks.append(search_apple_catalog(f"{art} {tit}", limit=1))
+
+    resolved_items = await asyncio.gather(*lookup_tasks, return_exceptions=True)
+    final_tracks = []
+    seen_tracks = set()
+
+    for sublist in resolved_items:
+        if isinstance(sublist, list) and sublist:
+            trk = sublist[0]
+            track_key = f"{normalize_text_ru(trk.get('uploader', ''))} - {normalize_text_ru(trk.get('title', ''))}"
+            if track_key not in seen_tracks:
+                seen_tracks.add(track_key)
+                final_tracks.append(trk)
+
+    if not final_tracks:
+        for art, tit in candidates[:limit]:
+            params = {
+                'id': f"txt_{abs(hash(art + tit))}",
+                'title': tit,
+                'artist': art,
+                'duration': "180",
+                'cover': '',
+                'artist_id': '',
+                'album_id': '',
+                'album_title': ''
+            }
+            final_tracks.append({
+                'id': f"am_txt_{abs(hash(art + tit))}",
+                'title': tit,
+                'uploader': art,
+                'url': "am://" + urllib.parse.urlencode(params),
+                'duration': 180,
+                'artist_id': None,
+                'album_id': None,
+                'album_title': None,
+                'cover_url': None,
+                'source': 'official'
+            })
+
+    return deduplicate_tracks(final_tracks)[:limit]
+
 async def search_artist_discography(artist_query: str, mode: str = "official", limit: int = 50):
     clean_query = str(artist_query).strip()
     normalized_artist = normalize_search_query(clean_query)
@@ -279,11 +379,9 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
         artist_id = None
         artist_display_name = target_name
 
-        # Если на вход поступил числовой ID (из кнопки "Все треки")
         if clean_query.isdigit():
             artist_id = clean_query
         else:
-            # Ищем сначала ID исполнителя по текстовому запросу
             term = urllib.parse.quote(target_name)
             artist_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=musicArtist&limit=3"
 
@@ -299,7 +397,6 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
             except Exception as e:
                 print(f"Apple Artist ID lookup error: {e}")
 
-            # Если через musicArtist не нашлось, пробуем получить artistId из первого найденного трека
             if not artist_id:
                 try:
                     song_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&limit=5"
