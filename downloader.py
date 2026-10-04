@@ -25,22 +25,31 @@ async def get_ym_client():
             print(f"Yandex Music init error: {e}")
     return ym_client
 
-ARTIST_TRANSLATIONS = {
-    'оксимирон': 'oxxxymiron',
-    'окси': 'oxxxymiron',
-    'макан': 'macan',
-    'мияги': 'miyagi',
-    'эндшпиль': 'andy panda',
-    'скриптонит': 'scriptonite',
-    'фараон': 'pharaoh',
-    'тейп': 'big baby tape',
-    'биг бейби тейп': 'big baby tape',
+# Единая карта сопоставления русско-английских артистов
+ARTIST_ALIASES = {
+    'макан': 'MACAN',
+    'macan': 'MACAN',
+    'оксимирон': 'Oxxxymiron',
+    'окси': 'Oxxxymiron',
+    'oxxxymiron': 'Oxxxymiron',
+    'мияги': 'Miyagi',
+    'miyagi': 'Miyagi',
+    'эндшпиль': 'Andy Panda',
+    'скриптонит': 'Скриптонит',
+    'scriptonite': 'Скриптонит',
+    'фараон': 'PHARAOH',
+    'pharaoh': 'PHARAOH',
+    'тейп': 'Big Baby Tape',
+    'биг бейби тейп': 'Big Baby Tape',
     'кизару': 'kizaru',
-    'моргенштерн': 'morgenshtern',
-    'френдли таг': 'friendly thug 52 ngg',
-    'лсп': 'лсп',
-    'кино': 'кино',
-    'баста': 'баста'
+    'kizaru': 'kizaru',
+    'моргенштерн': 'MORGENSHTERN',
+    'morgenshtern': 'MORGENSHTERN',
+    'френдли таг': 'FRIENDLY THUG 52 NGG',
+    'лсп': 'ЛСП',
+    'lsp': 'ЛСП',
+    'кино': 'Кино',
+    'баста': 'Баста'
 }
 
 def parse_sc_title_and_artist(raw_title: str, uploader: str):
@@ -161,23 +170,27 @@ def deduplicate_tracks(tracks: list) -> list:
 
 async def search_yandex(query: str, limit: int = 15):
     client = await get_ym_client()
-    if not client: return []
+    if not client: 
+        return []
 
     q_clean = query.strip().lower()
     search_queries = [query.strip()]
     
-    # Добавляем английский аналог, если артист введен на русском
-    if q_clean in ARTIST_TRANSLATIONS:
-        search_queries.insert(0, ARTIST_TRANSLATIONS[q_clean])
+    # Применяем карту соответствия артистов в начало списка запросов
+    if q_clean in ARTIST_ALIASES:
+        alias_name = ARTIST_ALIASES[q_clean]
+        if alias_name not in search_queries:
+            search_queries.insert(0, alias_name)
 
     all_tracks = []
 
     for q in search_queries:
         try:
             sr = await client.search(text=q, type_='all', page=0)
-            if not sr: continue
+            if not sr: 
+                continue
 
-            # 1. Если запрос распознан как профиль артиста — достаем его популярные треки
+            # 1. Если Яндекс определяет артиста — отдаем его официальные популярные треки
             if getattr(sr, 'best', None) and getattr(sr.best, 'type', None) == 'artist':
                 art_id = sr.best.result.id
                 artist_info = await client.artists_brief_info(art_id)
@@ -189,7 +202,7 @@ async def search_yandex(query: str, limit: int = 15):
             if getattr(sr, 'best', None) and getattr(sr.best, 'type', None) == 'track':
                 all_tracks.append(format_ym_track(sr.best.result))
 
-            # 3. Добавляем треки из результатов поиска
+            # 3. Добавляем треки из основной поисковой выдачи
             if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
                 all_tracks.extend([format_ym_track(t) for t in sr.tracks.results])
                 break
@@ -201,7 +214,8 @@ async def search_yandex(query: str, limit: int = 15):
 
 async def get_ym_album_tracks(album_id: str):
     client = await get_ym_client()
-    if not client: return []
+    if not client: 
+        return []
     try:
         album = await client.albums_with_tracks(int(album_id))
         if album and getattr(album, 'volumes', None):
@@ -220,7 +234,8 @@ async def get_ym_album_tracks(album_id: str):
 
 async def get_ym_artist_top(artist_id: str):
     client = await get_ym_client()
-    if not client: return []
+    if not client: 
+        return []
     try:
         artist_info = await client.artists_brief_info(int(artist_id))
         if artist_info and getattr(artist_info, 'popular_tracks', None):
@@ -234,10 +249,14 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     client = await get_ym_client()
     os.makedirs(output_dir, exist_ok=True)
     
-    tracks = await client.tracks([track_id])
-    if not tracks:
+    # Запрашиваем трек с полной информацией для обязательного наличия альбома
+    full_tracks = await client.tracks_with_info([track_id])
+    if not full_tracks:
+        full_tracks = await client.tracks([track_id])
+    if not full_tracks:
         raise Exception("Трек не найден")
-    track = tracks[0]
+        
+    track = full_tracks[0]
     
     try:
         artists = ", ".join([a.name for a in track.artists if getattr(a, 'name', None)])
@@ -250,16 +269,6 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     artist_id = str(track.artists[0].id) if getattr(track, 'artists', None) and len(track.artists) > 0 else None
     album_id = str(track.albums[0].id) if getattr(track, 'albums', None) and len(track.albums) > 0 else None
     album_title = str(getattr(track.albums[0], 'title', 'Альбом')) if album_id else None
-
-    # Дополнительная проверка альбома, если массив albums был пустым
-    if not album_id:
-        try:
-            full_info = await client.tracks_with_info([track_id])
-            if full_info and full_info[0].albums:
-                album_id = str(full_info[0].albums[0].id)
-                album_title = str(getattr(full_info[0].albums[0], 'title', 'Альбом'))
-        except Exception:
-            pass
 
     mp3_path = os.path.join(output_dir, f"ym_{track_id}.mp3")
     cover_raw_path = os.path.join(output_dir, f"ym_{track_id}_raw.jpg")
@@ -331,13 +340,16 @@ def search_sc_sync(query: str, limit: int = 15):
     results = []
     seen_ids = set()
     for entry in entries:
-        if not entry: continue
+        if not entry: 
+            continue
         eid = str(entry.get('id'))
-        if eid in seen_ids: continue
+        if eid in seen_ids: 
+            continue
         seen_ids.add(eid)
 
         url = entry.get('url') or entry.get('webpage_url')
-        if not url: continue
+        if not url: 
+            continue
         
         raw_title = entry.get('title', 'Без названия')
         raw_uploader = entry.get('uploader') or 'Неизвестный автор'
@@ -434,13 +446,17 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
             possible = f"{base_path}{ext}"
             if os.path.exists(possible):
                 thumb_path = prepare_telegram_cover(possible, cover_file)
-                try: os.remove(possible)
-                except Exception: pass
+                try: 
+                    os.remove(possible)
+                except Exception: 
+                    pass
                 break
 
     try:
-        try: audio = EasyID3(mp3_path)
-        except Exception: audio = EasyID3()
+        try: 
+            audio = EasyID3(mp3_path)
+        except Exception: 
+            audio = EasyID3()
         audio['title'] = final_title
         audio['artist'] = final_artist
         audio.save(mp3_path)
