@@ -599,14 +599,31 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     normalized_query = await resolve_dynamic_query(query)
     
     if mode == "official":
+        # Первый прогон (как ввел пользователь)
         ym_results = await search_yandex(normalized_query, limit=limit, original_query=query)
         
+        # Резервный прогон по оригинальной кириллице
         if not ym_results and query.strip().lower() != normalized_query.lower():
             ym_results = await search_yandex(query.strip(), limit=limit, original_query=query)
             
+        # УМНОЕ ПЕРЕМЕШИВАНИЕ СЛОВ (Reverse Fallback)
+        if not ym_results:
+            words = query.split()
+            # Если запрос состоит из нескольких слов, меняем первую половину со второй
+            if len(words) > 1:
+                mid = len(words) // 2
+                reversed_query = " ".join(words[mid:] + words[:mid])
+                reversed_normalized = await resolve_dynamic_query(reversed_query)
+                ym_results = await search_yandex(reversed_normalized, limit=limit, original_query=reversed_query)
+                
+                # Если и нормализованный реверс не помог, пробуем чистый реверс
+                if not ym_results and reversed_query.strip().lower() != reversed_normalized.lower():
+                     ym_results = await search_yandex(reversed_query.strip(), limit=limit, original_query=reversed_query)
+
         if ym_results:
             return ym_results
 
+    # Поиск в SoundCloud 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, search_sc_sync, normalized_query, limit, query)
 
