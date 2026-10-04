@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import re
 
 DB_NAME = "database.db"
 
@@ -131,35 +132,56 @@ def get_cached_file_id(track_id: str) -> str:
     conn.close()
     return row[0] if row else None
 
-# --- Поиск по кэшу с нормализацией регистра и переводом раскладки ---
-
-COMMON_ALIASES = {
-    'макан': 'macan',
-    'macan': 'макан',
-    'оксимирон': 'oxxxymiron',
-    'oxxxymiron': 'оксимирон',
-    'окси': 'oxxxymiron',
-    'мияги': 'miyagi',
-    'miyagi': 'мияги',
-    'скриптонит': 'scriptonite',
-    'scriptonite': 'скриптонит',
-    'фараон': 'pharaoh',
-    'pharaoh': 'фараон',
+# --- Универсальный локальный словарь (синхронизирован с downloader.py) ---
+ARTIST_ALIASES = {
+    'макан': 'MACAN',
+    'macan': 'MACAN',
+    'оксимирон': 'Oxxxymiron',
+    'окси': 'Oxxxymiron',
+    'oxxxymiron': 'Oxxxymiron',
+    'мияги': 'Miyagi',
+    'miyagi': 'Miyagi',
+    'эндшпиль': 'Andy Panda',
+    'скриптонит': 'Скриптонит',
+    'scriptonite': 'Скриптонит',
+    'фараон': 'PHARAOH',
+    'pharaoh': 'PHARAOH',
+    'тейп': 'Big Baby Tape',
+    'биг бейби тейп': 'Big Baby Tape',
     'кизару': 'kizaru',
-    'kizaru': 'кизару',
-    'тейп': 'big baby tape',
-    'моргенштерн': 'morgenshtern',
-    'morgenshtern': 'моргенштерн',
-    'френдли таг': 'friendly thug',
-    'кино': 'kino',
-    'kino': 'кино',
-    'лсп': 'lsp',
-    'lsp': 'лсп'
+    'kizaru': 'kizaru',
+    'моргенштерн': 'MORGENSHTERN',
+    'morgenshtern': 'MORGENSHTERN',
+    'френдли таг': 'FRIENDLY THUG 52 NGG',
+    'френдлитаг': 'FRIENDLY THUG 52 NGG',
+    'таг': 'FRIENDLY THUG 52 NGG',
+    'лсп': 'ЛСП',
+    'lsp': 'ЛСП',
+    'кино': 'Кино',
+    'баста': 'Баста',
+    'гуф': 'GUF',
+    'инстасамка': 'INSTASAMKA',
+    'каста': 'Каста',
+    'король и шут': 'Король и Шут',
+    'киш': 'Король и Шут',
+    'капсайз': 'CUPSIZE',
+    'cupsize': 'CUPSIZE',
+    'плм': 'ПОЛМАТЕРИ',
+    'полматери': 'ПОЛМАТЕРИ'
 }
+
+def normalize_inline_query(query: str) -> str:
+    """Функция нормализации для мгновенного инлайн-поиска"""
+    if not query: return ""
+    query_lower = query.strip().lower()
+    if query_lower in ARTIST_ALIASES:
+        return ARTIST_ALIASES[query_lower].lower()
+    return query_lower
 
 def search_cached_tracks(query: str, limit: int = 15):
     conn = get_connection()
     c = conn.cursor()
+    # Вытягиваем все закэшированные треки
     c.execute('''
         SELECT track_id, title, artist, telegram_file_id 
         FROM downloads 
@@ -169,26 +191,55 @@ def search_cached_tracks(query: str, limit: int = 15):
     rows = c.fetchall()
     conn.close()
 
-    q = query.lower().strip()
+    # 1. Оригинальный запрос пользователя (например, "капсайз маша")
+    original_q = query.lower().strip()
     
-    # Генерация синонима (например, макан -> macan)
-    alias_q = COMMON_ALIASES.get(q, "")
+    # 2. Нормализованный запрос (например, "cupsize маша")
+    # Если введено несколько слов, пытаемся перевести первое слово или использовать целиком
+    normalized_q = original_q
+    first_word = original_q.split()[0] if original_q.split() else ""
+    
+    if original_q in ARTIST_ALIASES:
+        normalized_q = ARTIST_ALIASES[original_q].lower()
+    elif first_word in ARTIST_ALIASES:
+        normalized_q = original_q.replace(first_word, ARTIST_ALIASES[first_word].lower(), 1)
+
+    # Разбиваем запросы на слова для гибкого поиска
+    search_words = set(re.findall(r'\b\w{3,}\b', normalized_q)).union(set(re.findall(r'\b\w{3,}\b', original_q)))
+    
+    if not search_words:
+        # Если слова слишком короткие, ищем прямым вхождением
+        search_words = {original_q, normalized_q}
 
     results = []
+    
     for row in rows:
         track_id, title, artist, file_id = row
         t_low = (title or "").lower()
         a_low = (artist or "").lower()
-        combined = f"{t_low} {a_low}"
+        combined_text = f"{t_low} {a_low}"
 
-        # Проверка прямого вхождения без учета регистра
-        if q in t_low or q in a_low or q in combined:
-            results.append(row)
-        elif alias_q and (alias_q in t_low or alias_q in a_low or alias_q in combined):
-            results.append(row)
+        # Проверяем: если ВСЕ слова из нормализованного (или оригинального) запроса есть в названии/авторе
+        # Это обеспечивает высокую точность. Например: запрос "плм маша" -> "полматери маша". Оба слова должны быть в треке.
+        
+        match_normalized = all(word in combined_text for word in re.findall(r'\b\w{3,}\b', normalized_q)) if len(normalized_q)>2 else (normalized_q in combined_text)
+        match_original = all(word in combined_text for word in re.findall(r'\b\w{3,}\b', original_q)) if len(original_q)>2 else (original_q in combined_text)
+        
+        if match_normalized or match_original:
+             results.append(row)
 
         if len(results) >= limit:
             break
+
+    # Сортировка: точные совпадения (когда запрос целиком есть в названии) поднимаем наверх
+    def sort_key(row):
+        score = 0
+        comb = f"{row[1]} {row[2]}".lower()
+        if normalized_q in comb: score += 10
+        if original_q in comb: score += 5
+        return score
+        
+    results.sort(key=sort_key, reverse=True)
 
     return results
 
