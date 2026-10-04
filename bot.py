@@ -12,13 +12,13 @@ from aiogram.types import (
     KeyboardButton,
     BotCommand,
     InlineQuery,
-    InlineQueryResultAudio
+    InlineQueryResultArticle,
+    InputTextMessageContent
 )
 from dotenv import load_dotenv
 
-# Подключаем локальные модули
 import database
-from downloader import download_track, search_tracks, get_direct_stream_url
+from downloader import download_track, search_tracks
 from visualizer import generate_apple_card
 
 load_dotenv()
@@ -32,7 +32,6 @@ dp = Dispatcher()
 
 USER_SESSIONS = {}
 
-# Лимит в секундах, после которого трек считается подозрительно долгим (4 минуты)
 LONG_TRACK_THRESHOLD = 240
 
 def format_duration(seconds) -> str:
@@ -133,7 +132,7 @@ async def reply_toggle_mode_handler(message: types.Message):
         parse_mode="HTML"
     )
 
-# --- Инлайн-навигация меню ---
+# --- Инлайн-навигация главного меню ---
 
 @dp.callback_query(F.data == "menu:main")
 async def show_main_menu(callback: CallbackQuery):
@@ -399,6 +398,8 @@ async def callback_pagination(callback: CallbackQuery):
 async def callback_noop(callback: CallbackQuery):
     await callback.answer()
 
+# --- Выбор трека и проверка на длительность ---
+
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
     short_id = callback.data.split("dl:")[1]
@@ -497,58 +498,67 @@ async def callback_dl_db(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
-# --- ИНЛАЙН РЕЖИМ (Работа прямо в сторонних чатах и группах) ---
+# --- ИНЛАЙН РЕЖИМ (Работа во всех диалогах) ---
 
 @dp.inline_query()
 async def inline_search_handler(inline_query: InlineQuery):
     query = inline_query.query.strip()
-    if not query:
-        return
-
-    # Ищем треки через Яндекс Музыку
-    results = await search_tracks(query, mode="official", limit=8)
-    if not results:
-        return
-
-    is_artist = isinstance(results, dict) and results.get('type') == 'artist'
-    tracks_list = results['tracks'] if is_artist else results
-
-    audio_results = []
     
-    # Кнопка под аудиосообщением для повторного поиска
-    inline_share_kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(
-            text="🎧 Нажми, чтобы найти песню",
-            switch_inline_query_current_chat=""
-        )
-    ]])
+    if not query or len(query) < 2:
+        await inline_query.answer([], cache_time=2, is_personal=True)
+        return
 
-    for item in tracks_list[:6]:
-        try:
-            stream_url = await get_direct_stream_url(item['url'])
-            if not stream_url:
-                continue
+    print(f"🔥 [INLINE QUERY] Получен запрос: '{query}'")
 
-            duration = int(float(item.get('duration') or 0))
-            
-            audio_results.append(
-                InlineQueryResultAudio(
-                    id=f"inline_{item['id']}",
-                    audio_url=stream_url,
-                    title=item['title'],
-                    performer=item['uploader'],
-                    audio_duration=duration,
-                    reply_markup=inline_share_kb
+    try:
+        results = await search_tracks(query, mode="official", limit=8)
+        if not results:
+            await inline_query.answer([], cache_time=5, is_personal=True)
+            return
+
+        is_artist = isinstance(results, dict) and results.get('type') == 'artist'
+        tracks_list = results['tracks'] if is_artist else results
+
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username or "nomscbot"
+
+        items = []
+        for idx, t in enumerate(tracks_list[:8]):
+            track_title = t.get('title', 'Без названия')
+            artist_name = t.get('uploader', 'Артист')
+            duration = int(float(t.get('duration') or 0))
+            dur_str = format_duration(duration) if duration > 0 else ""
+
+            inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="🎧 Нажми, чтобы найти песню",
+                    switch_inline_query_current_chat=""
+                )
+            ]])
+
+            items.append(
+                InlineQueryResultArticle(
+                    id=f"in_{idx}_{t['id']}"[:50],
+                    title=f"{artist_name} — {track_title}",
+                    description=f"⏱ {dur_str} • Нажмите, чтобы отправить" if dur_str else "Нажмите, чтобы отправить в чат",
+                    input_message_content=InputTextMessageContent(
+                        message_text=(
+                            f"🎵 <b>{artist_name} — {track_title}</b>\n"
+                            f"⏱ <i>Длительность: {dur_str}</i>\n\n"
+                            f"🎧 Отправлено через @{bot_username}"
+                        ),
+                        parse_mode="HTML"
+                    ),
+                    reply_markup=inline_kb
                 )
             )
-        except Exception as e:
-            print(f"Inline track prep error: {e}")
 
-    await inline_query.answer(
-        audio_results,
-        cache_time=120,
-        is_personal=True
-    )
+        await inline_query.answer(items, cache_time=10, is_personal=True)
+        print(f"✅ [INLINE SUCCESS] Отправлено {len(items)} результатов")
+
+    except Exception as e:
+        print(f"❌ [INLINE ERROR]: {e}")
+        await inline_query.answer([], cache_time=2, is_personal=True)
 
 # --- ВЕБ-сервер и запуск ---
 
@@ -576,8 +586,14 @@ async def main():
     database.init_db()
     await set_bot_commands()
     await start_dummy_web_server()
-    print("Бот запущен...")
-    await dp.start_polling(bot)
+    
+    await bot.delete_webhook(drop_pending_updates=True)
+    print("Бот успешно запущен и слушает события...")
+    
+    await dp.start_polling(
+        bot,
+        allowed_updates=["message", "callback_query", "inline_query", "chosen_inline_result"]
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
