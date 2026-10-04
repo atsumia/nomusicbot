@@ -26,7 +26,7 @@ async def get_ym_client():
             print(f"Yandex Music init error: {e}")
     return ym_client
 
-# Статическая карта для самых популярных артистов
+# Расширенная статическая карта для локального андеграунда и нишевых артистов
 ARTIST_ALIASES = {
     'макан': 'MACAN',
     'macan': 'MACAN',
@@ -55,7 +55,11 @@ ARTIST_ALIASES = {
     'инстасамка': 'INSTASAMKA',
     'каста': 'Каста',
     'король и шут': 'Король и Шут',
-    'киш': 'Король и Шут'
+    'киш': 'Король и Шут',
+    'капсайз': 'CUPSIZE',
+    'cupsize': 'CUPSIZE',
+    'плм': 'ПОЛМАТЕРИ',
+    'полматери': 'ПОЛМАТЕРИ'
 }
 
 # Динамический кэш с лимитом размера для защиты RAM на Render (512 МБ)
@@ -247,7 +251,6 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
         if sr:
             artist_found = False
 
-            # 1. Приоритетный поиск официального профиля артиста
             if getattr(sr, 'artists', None) and getattr(sr.artists, 'results', None):
                 for artist in sr.artists.results:
                     if artist.name and artist.name.lower() == query.lower():
@@ -257,7 +260,6 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
                             artist_found = True
                         break 
 
-            # 2. Если точный профиль не найден, проверяем блок best
             if not artist_found and getattr(sr, 'best', None):
                 if getattr(sr.best, 'type', None) == 'artist':
                     art_id = sr.best.result.id
@@ -267,7 +269,6 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
                 elif getattr(sr.best, 'type', None) == 'track':
                     all_tracks.append(format_ym_track(sr.best.result))
 
-            # 3. Основная поисковая выдача
             if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
                 all_tracks.extend([format_ym_track(t) for t in sr.tracks.results])
 
@@ -388,7 +389,7 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
         'album_title': album_title
     }
 
-def search_sc_sync(query: str, limit: int = 15):
+def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
     search_opts = {
         'format': 'bestaudio/best',
         'quiet': True,
@@ -430,7 +431,14 @@ def search_sc_sync(query: str, limit: int = 15):
             'url': url,
             'duration': entry.get('duration') or 0
         })
-    return deduplicate_tracks(results)[:limit]
+        
+    unique_tracks = deduplicate_tracks(results)
+    
+    # Жесткий фильтр теперь применяется и к мусору из SoundCloud!
+    query_to_check = original_query if original_query else query
+    filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
+    
+    return filtered_tracks[:limit]
 
 async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     os.makedirs(output_dir, exist_ok=True)
@@ -562,7 +570,7 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
             return ym_results
 
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, search_sc_sync, normalized_query, limit)
+    return await loop.run_in_executor(None, search_sc_sync, normalized_query, limit, query)
 
 async def download_track(url: str) -> dict:
     if url.startswith("ym://"):
