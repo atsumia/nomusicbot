@@ -144,18 +144,14 @@ def format_ym_track(track):
         artists = "Артист"
 
     artist_id = None
-    try:
-        if track.artists and len(track.artists) > 0:
-            artist_id = str(track.artists[0].id)
-    except Exception: pass
+    if getattr(track, 'artists', None) and len(track.artists) > 0:
+        artist_id = str(track.artists[0].id)
 
     album_id = None
     album_title = None
-    try:
-        if track.albums and len(track.albums) > 0:
-            album_id = str(track.albums[0].id)
-            album_title = str(track.albums[0].title)
-    except Exception: pass
+    if getattr(track, 'albums', None) and len(track.albums) > 0:
+        album_id = str(track.albums[0].id)
+        album_title = str(track.albums[0].title)
 
     return {
         'id': f"ym_{track.id}",
@@ -180,66 +176,32 @@ def deduplicate_tracks(tracks: list) -> list:
             unique.append(t)
     return unique
 
-def bubble_exact_matches(tracks: list, query: str) -> list:
-    q = query.lower().strip()
-    tier1 = [] 
-    tier2 = [] 
-    tier3 = [] 
-    
-    for t in tracks:
-        title = t.get('title', '').lower()
-        artist = t.get('uploader', '').lower()
-        full_name = f"{artist} - {title}"
-        
-        if q == title or q == full_name:
-            tier1.append(t)
-        elif q in title or q in full_name:
-            tier2.append(t)
-        else:
-            tier3.append(t)
-            
-    return deduplicate_tracks(tier1 + tier2 + tier3)
-
 async def search_yandex(query: str, limit: int = 15):
+    """Мощный родной поиск Яндекса (без костылей и транслитераций)"""
     client = await get_ym_client()
     if not client: return []
 
     try:
         sr = await client.search(text=query, type_='all', page=0)
-        query_lower = query.lower().strip()
-        
-        # 1. ЖЕСТКИЙ ПЕРЕХВАТ АРТИСТОВ (Защита от Хованского при поиске "Оксимирон")
-        # Если Яндекс говорит, что лучший ответ — это артист:
-        if getattr(sr, 'best', None) and sr.best.type == 'artist':
-            artist_info = await client.artists_brief_info(sr.best.result.id)
-            if artist_info and getattr(artist_info, 'popular_tracks', None):
-                return deduplicate_tracks([format_ym_track(t) for t in artist_info.popular_tracks])[:limit]
-                
-        # Если в выдаче есть артист с точным совпадением имени:
-        if getattr(sr, 'artists', None) and getattr(sr.artists, 'results', None):
-            for art in sr.artists.results:
-                if getattr(art, 'name', '').lower() == query_lower:
-                    artist_info = await client.artists_brief_info(art.id)
-                    if artist_info and getattr(artist_info, 'popular_tracks', None):
-                        return deduplicate_tracks([format_ym_track(t) for t in artist_info.popular_tracks])[:limit]
-
-        # 2. ПОИСК ОБЫЧНЫХ ТРЕКОВ
         all_tracks = []
-        if getattr(sr, 'best', None) and sr.best.type == 'track':
+        
+        # 1. Если Яндекс точно определил, что лучший ответ это конкретный трек
+        if getattr(sr, 'best', None) and getattr(sr.best, 'type', None) == 'track':
             all_tracks.append(format_ym_track(sr.best.result))
             
+        # 2. Берем список треков, которые выдал Яндекс (они уже идеально отсортированы Яндексом)
         if getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
             for t in sr.tracks.results:
                 all_tracks.append(format_ym_track(t))
                 
+        # 3. Страховка, если поиск 'all' почему-то не дал треков
         if not all_tracks:
             tr_sr = await client.search(text=query, type_='track', page=0)
             if getattr(tr_sr, 'tracks', None) and getattr(tr_sr.tracks, 'results', None):
                 for t in tr_sr.tracks.results:
                     all_tracks.append(format_ym_track(t))
 
-        unique_tracks = deduplicate_tracks(all_tracks)
-        return bubble_exact_matches(unique_tracks, query)[:limit]
+        return deduplicate_tracks(all_tracks)[:limit]
     except Exception as e:
         print(f"YM search error: {e}")
         return []
@@ -288,6 +250,7 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     title = track.title or "Без названия"
     duration = int(track.duration_ms / 1000) if getattr(track, 'duration_ms', None) else 0
     
+    # 100% надежное извлечение ID при прямом скачивании
     artist_id = str(track.artists[0].id) if getattr(track, 'artists', None) and len(track.artists) > 0 else None
     album_id = str(track.albums[0].id) if getattr(track, 'albums', None) and len(track.albums) > 0 else None
 
@@ -342,6 +305,7 @@ async def download_yandex_track(track_id: str, output_dir: str = "/tmp") -> dict
     }
 
 def search_sc_sync(query: str, limit: int = 15):
+    # В SC оставляем транслит-фонетику, так как поиск там ограниченный
     queries = get_search_queries(query)
     search_opts = {
         'format': 'bestaudio/best',
