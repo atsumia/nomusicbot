@@ -16,6 +16,13 @@ load_dotenv()
 shazam = Shazam()
 ym_client = None
 
+def normalize_text_ru(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = text.lower().replace('ё', 'е')
+    cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
+    return re.sub(r'\s+', ' ', cleaned).strip()
+
 async def get_ym_client():
     global ym_client
     if ym_client is not None:
@@ -89,14 +96,14 @@ ARTIST_ALIASES = {
 def normalize_search_query(query: str) -> str:
     if not query:
         return ""
-    q_low = query.strip().lower()
-    if q_low in ARTIST_ALIASES:
-        return ARTIST_ALIASES[q_low]
-    normalized = query
+    q_norm = normalize_text_ru(query)
     for k in sorted(ARTIST_ALIASES.keys(), key=len, reverse=True):
-        pattern = r'(?i)\b' + re.escape(k) + r'\b'
-        normalized = re.sub(pattern, ARTIST_ALIASES[k], normalized)
-    return normalized.strip()
+        k_norm = normalize_text_ru(k)
+        pattern = r'\b' + re.escape(k_norm) + r'\b'
+        if re.search(pattern, q_norm):
+            q_norm = re.sub(pattern, ARTIST_ALIASES[k], q_norm)
+            return q_norm.strip()
+    return query.strip()
 
 def prepare_telegram_cover(raw_img_path: str, output_path: str):
     try:
@@ -119,7 +126,7 @@ def deduplicate_tracks(tracks: list) -> list:
     seen = set()
     unique = []
     for t in tracks:
-        key = f"{t.get('uploader', '').strip().lower()} - {t.get('title', '').strip().lower()}"
+        key = f"{normalize_text_ru(t.get('uploader', ''))} - {normalize_text_ru(t.get('title', ''))}"
         if key not in seen:
             seen.add(key)
             unique.append(t)
@@ -183,7 +190,7 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
 def strict_text_filter(tracks: list, original_query: str, normalized_query: str) -> list:
     filtered = []
     def extract_words(text):
-        clean = re.sub(r'[^\w\s]', '', text.lower())
+        clean = normalize_text_ru(text)
         return set([w for w in clean.split() if len(w) >= 2])
 
     orig_words = extract_words(original_query)
@@ -194,8 +201,9 @@ def strict_text_filter(tracks: list, original_query: str, normalized_query: str)
         return tracks
 
     for t in tracks:
-        track_text = f"{t.get('uploader', '')} {t.get('title', '')}".lower()
-        if any(word in track_text for word in check_words):
+        track_text = normalize_text_ru(f"{t.get('uploader', '')} {t.get('title', '')}")
+        track_words = set(track_text.split())
+        if any(any(tw.startswith(w) or w in tw for tw in track_words) or w in track_text for w in check_words):
             filtered.append(t)
     return filtered
 
@@ -258,31 +266,55 @@ async def search_apple_catalog(query: str, limit: int = 15):
     return filtered[:limit] if filtered else unique[:limit]
 
 async def search_artist_discography(artist_query: str, mode: str = "official", limit: int = 50):
-    normalized_artist = normalize_search_query(artist_query)
-    target_name = normalized_artist or artist_query
+    clean_query = str(artist_query).strip()
+    normalized_artist = normalize_search_query(clean_query)
+    target_name = normalized_artist or clean_query
 
     if mode == "official":
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json'
         }
-        term = urllib.parse.quote(target_name)
-        artist_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=musicArtist&limit=1"
 
         artist_id = None
         artist_display_name = target_name
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=4.0)
-            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.get(artist_search_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        if data.get('results'):
-                            artist_id = data['results'][0].get('artistId')
-                            artist_display_name = data['results'][0].get('artistName', target_name)
-        except Exception as e:
-            print(f"Apple Artist ID lookup error: {e}")
+        # Если на вход поступил числовой ID (из кнопки "Все треки")
+        if clean_query.isdigit():
+            artist_id = clean_query
+        else:
+            # Ищем сначала ID исполнителя по текстовому запросу
+            term = urllib.parse.quote(target_name)
+            artist_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=musicArtist&limit=3"
+
+            try:
+                timeout = aiohttp.ClientTimeout(total=4.0)
+                async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                    async with session.get(artist_search_url) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            if data.get('results'):
+                                artist_id = str(data['results'][0].get('artistId'))
+                                artist_display_name = data['results'][0].get('artistName', target_name)
+            except Exception as e:
+                print(f"Apple Artist ID lookup error: {e}")
+
+            # Если через musicArtist не нашлось, пробуем получить artistId из первого найденного трека
+            if not artist_id:
+                try:
+                    song_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&limit=5"
+                    timeout = aiohttp.ClientTimeout(total=4.0)
+                    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                        async with session.get(song_search_url) as resp:
+                            if resp.status == 200:
+                                data = await resp.json(content_type=None)
+                                for item in data.get('results', []):
+                                    if item.get('artistId'):
+                                        artist_id = str(item.get('artistId'))
+                                        artist_display_name = item.get('artistName', target_name)
+                                        break
+                except Exception as e:
+                    print(f"Apple Artist ID from song fallback error: {e}")
 
         tracks = []
         if artist_id:
@@ -294,7 +326,9 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
                         if resp.status == 200:
                             data = await resp.json(content_type=None)
                             for item in data.get('results', []):
-                                if item.get('wrapperType') == 'track' and item.get('kind') == 'song':
+                                if item.get('wrapperType') == 'artist':
+                                    artist_display_name = item.get('artistName', artist_display_name)
+                                elif item.get('wrapperType') == 'track' and item.get('kind') == 'song':
                                     tid = str(item.get('trackId'))
                                     title = item.get('trackName', 'Без названия')
                                     artist = item.get('artistName', artist_display_name)
@@ -331,7 +365,7 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
             except Exception as e:
                 print(f"Apple Lookup tracks error: {e}")
 
-        if not tracks:
+        if not tracks and not clean_query.isdigit():
             tracks = await search_apple_catalog(target_name, limit=limit)
             for t in tracks:
                 t['artist_display_name'] = artist_display_name
@@ -341,7 +375,7 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
 
     else:
         loop = asyncio.get_event_loop()
-        sc_results = await loop.run_in_executor(None, search_sc_sync, target_name, limit, artist_query)
+        sc_results = await loop.run_in_executor(None, search_sc_sync, target_name, limit, clean_query)
         for item in sc_results:
             item['artist_display_name'] = target_name
             item['source'] = 'soundcloud'
@@ -379,6 +413,7 @@ async def get_am_album_tracks(album_id: str):
                                 'artist': artist,
                                 'duration': str(dur_sec),
                                 'cover': cover_hq or '',
+                                'artist_id': str(item.get('artistId', '')),
                                 'album_id': str(album_id),
                                 'album_title': album_title
                             }
@@ -390,6 +425,7 @@ async def get_am_album_tracks(album_id: str):
                                 'uploader': artist,
                                 'url': encoded_url,
                                 'duration': dur_sec,
+                                'artist_id': str(item.get('artistId', '')) or None,
                                 'album_id': str(album_id),
                                 'album_title': album_title,
                                 'cover_url': cover_hq,
@@ -479,7 +515,6 @@ async def download_official_track(url_data: str, output_dir: str = "/tmp") -> di
             download_success = True
             print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 из официального источника для {ym_query}")
         else:
-            # Пробуем без дефиса чисто имя + название
             alt_query = f"{artist} {title}"
             sr = await client.search(text=alt_query, type_='track', page=0)
             if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
