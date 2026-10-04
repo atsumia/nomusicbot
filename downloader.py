@@ -126,7 +126,7 @@ r'[.?]',
 r'(.?official.?)',
 r'(.?audio.?)',
 r'(.?prod..?)',
-r'(.?(slowed\vert{}sped up\vert{}speed up\vert{}reverb\vert{}remix).?)',
+r'(.?(slowed|sped up|speed up|reverb|remix).?)',
 r'\b(slowed\s(?:+|&|and)\s*reverb)\b',
 r'\b(slowed|sped up|speed up|reverb|remix)\b',
 r't.me/\S+',
@@ -227,7 +227,7 @@ all_tracks = []
 try:
 sr = await client.search(text=query, type_='all', page=0)
 if sr:
-# 1. Точное совпадение по артисту
+# 1. Точное совпадение по имени артиста
 if getattr(sr, 'artists', None) and getattr(sr.artists, 'results', None):
 for artist in sr.artists.results:
 if artist.name and artist.name.lower() == query.lower():
@@ -253,6 +253,35 @@ unique_tracks = deduplicate_tracks(all_tracks)
 query_to_check = original_query if original_query else query
 filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
 return filtered_tracks[:limit]
+async def search_artist_discography(artist_query: str, limit: int = 50):
+client = await get_ym_client()
+if not client:
+return []
+normalized_artist = await resolve_dynamic_query(artist_query)
+target_name = normalized_artist or artist_query
+all_artist_tracks = []
+target_artist_id = None
+try:
+sr_artist = await client.search(text=target_name, type_='artist', page=0)
+if sr_artist and getattr(sr_artist, 'artists', None) and getattr(sr_artist.artists, 'results', None):
+target_artist_id = sr_artist.artists.results[0].id
+else:
+sr_all = await client.search(text=target_name, type_='all', page=0)
+if sr_all and getattr(sr_all, 'best', None) and getattr(sr_all.best, 'type', None) == 'artist':
+target_artist_id = sr_all.best.result.id
+if target_artist_id:
+artist_info = await client.artists_brief_info(int(target_artist_id))
+if artist_info and getattr(artist_info, 'popular_tracks', None):
+all_artist_tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+try:
+more_tracks = await client.artists_tracks(int(target_artist_id), page=0, page_size=limit)
+if more_tracks and getattr(more_tracks, 'tracks', None):
+all_artist_tracks.extend([format_ym_track(t) for t in more_tracks.tracks])
+except Exception as e:
+print(f"Fetch more artist tracks error: {e}")
+except Exception as e:
+print(f"Search artist discography error: {e}")
+return deduplicate_tracks(all_artist_tracks)[:limit]
 async def get_ym_album_tracks(album_id: str):
 client = await get_ym_client()
 if not client:
@@ -277,10 +306,17 @@ client = await get_ym_client()
 if not client:
 return []
 try:
+tracks = []
 artist_info = await client.artists_brief_info(int(artist_id))
 if artist_info and getattr(artist_info, 'popular_tracks', None):
-raw_tracks = [format_ym_track(t) for t in artist_info.popular_tracks]
-return deduplicate_tracks(raw_tracks)[:15]
+tracks.extend([format_ym_track(t) for t in artist_info.popular_tracks])
+try:
+more = await client.artists_tracks(int(artist_id), page=0, page_size=50)
+if more and getattr(more, 'tracks', None):
+tracks.extend([format_ym_track(t) for t in more.tracks])
+except Exception:
+pass
+return deduplicate_tracks(tracks)[:50]
 except Exception as e:
 print(f"Artist top error: {e}")
 return []
