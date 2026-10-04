@@ -1,80 +1,202 @@
 import sqlite3
+import os
 
-DB_NAME = "nomusic.db"
+DB_NAME = "database.db"
+
+def get_connection():
+    return sqlite3.connect(DB_NAME)
 
 def init_db():
-    with sqlite3.connect(DB_NAME) as conn:
-        c = conn.cursor()
-        # Таблица пользователей
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-                     (user_id INTEGER PRIMARY KEY, username TEXT, download_count INTEGER DEFAULT 0, search_mode TEXT DEFAULT 'official')''')
-        # История скачиваний
-        c.execute('''CREATE TABLE IF NOT EXISTS history
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, track_id TEXT, title TEXT, artist TEXT, url TEXT)''')
-        # Избранные треки
-        c.execute('''CREATE TABLE IF NOT EXISTS favorites
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, track_id TEXT, title TEXT, artist TEXT, url TEXT)''')
-        conn.commit()
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Таблица пользователей
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            search_mode TEXT DEFAULT 'official',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
-def get_user(user_id, username="Пользователь"):
-    with sqlite3.connect(DB_NAME) as conn:
-        c = conn.cursor()
-        c.execute("SELECT user_id, username, download_count, search_mode FROM users WHERE user_id=?", (user_id,))
-        user = c.fetchone()
-        if not user:
-            c.execute("INSERT INTO users (user_id, username) VALUES (?, ?)", (user_id, username))
+    # Таблица загрузок и истории
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS downloads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            track_id TEXT,
+            title TEXT,
+            artist TEXT,
+            url TEXT,
+            telegram_file_id TEXT,
+            download_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Таблица избранного
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            track_id TEXT,
+            title TEXT,
+            artist TEXT,
+            url TEXT,
+            telegram_file_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, track_id)
+        )
+    ''')
+
+    # Безопасное добавление колонки telegram_file_id, если таблицы уже были созданы
+    try:
+        c.execute("ALTER TABLE downloads ADD COLUMN telegram_file_id TEXT")
+    except Exception:
+        pass
+
+    try:
+        c.execute("ALTER TABLE favorites ADD COLUMN telegram_file_id TEXT")
+    except Exception:
+        pass
+
+    conn.commit()
+    conn.close()
+
+def get_user(user_id: int, username: str = None):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT user_id, username, search_mode FROM users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    
+    if not row:
+        c.execute(
+            "INSERT INTO users (user_id, username, search_mode) VALUES (?, ?, 'official')",
+            (user_id, username or "")
+        )
+        conn.commit()
+        mode = 'official'
+    else:
+        mode = row[2]
+        if username and row[1] != username:
+            c.execute("UPDATE users SET username = ? WHERE user_id = ?", (username, user_id))
             conn.commit()
-            return {"user_id": user_id, "username": username, "download_count": 0, "search_mode": "official"}
-        return {"user_id": user[0], "username": user[1], "download_count": user[2], "search_mode": user[3]}
 
-def set_mode(user_id, mode):
-    with sqlite3.connect(DB_NAME) as conn:
-        conn.execute("UPDATE users SET search_mode=? WHERE user_id=?", (mode, user_id))
+    c.execute("SELECT COUNT(*) FROM downloads WHERE user_id = ?", (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+
+    return {
+        'user_id': user_id,
+        'username': username or "",
+        'search_mode': mode,
+        'download_count': count
+    }
+
+def set_mode(user_id: int, mode: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE users SET search_mode = ? WHERE user_id = ?", (mode, user_id))
+    conn.commit()
+    conn.close()
+
+def add_download(user_id: int, track_id: str, title: str, artist: str, url: str, telegram_file_id: str = None):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO downloads (user_id, track_id, title, artist, url, telegram_file_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, track_id, title, artist, url, telegram_file_id)
+    )
+    conn.commit()
+    conn.close()
+
+def save_telegram_file_id(track_id: str, file_id: str):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE downloads SET telegram_file_id = ? WHERE track_id = ?", (file_id, track_id))
+    c.execute("UPDATE favorites SET telegram_file_id = ? WHERE track_id = ?", (file_id, track_id))
+    conn.commit()
+    conn.close()
+
+def get_cached_file_id(track_id: str) -> str:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(
+        "SELECT telegram_file_id FROM downloads WHERE track_id = ? AND telegram_file_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (track_id,)
+    )
+    row = c.fetchone()
+    if not row:
+        c.execute(
+            "SELECT telegram_file_id FROM favorites WHERE track_id = ? AND telegram_file_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (track_id,)
+        )
+        row = c.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def get_history(user_id: int, limit: int = 5):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, track_id, title, artist, url FROM downloads WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        (user_id, limit)
+    )
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def toggle_favorite(user_id: int, track_id: str) -> bool:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id FROM favorites WHERE user_id = ? AND track_id = ?", (user_id, track_id))
+    row = c.fetchone()
+
+    if row:
+        c.execute("DELETE FROM favorites WHERE id = ?", (row[0],))
         conn.commit()
-
-def add_download(user_id, track_id, title, artist, url):
-    with sqlite3.connect(DB_NAME) as conn:
-        c = conn.cursor()
-        # Увеличиваем счетчик
-        c.execute("UPDATE users SET download_count = download_count + 1 WHERE user_id=?", (user_id,))
-        # Добавляем в историю
-        c.execute("INSERT INTO history (user_id, track_id, title, artist, url) VALUES (?, ?, ?, ?, ?)", 
-                     (user_id, track_id, title, artist, url))
-        # Храним только последние 10 треков в истории (чтобы не засорять память)
-        c.execute("DELETE FROM history WHERE id NOT IN (SELECT id FROM history WHERE user_id=? ORDER BY id DESC LIMIT 10)", (user_id,))
-        conn.commit()
-
-def is_favorite(user_id, track_id):
-    with sqlite3.connect(DB_NAME) as conn:
-        res = conn.execute("SELECT 1 FROM favorites WHERE user_id=? AND track_id=?", (user_id, track_id)).fetchone()
-        return bool(res)
-
-def toggle_favorite(user_id, track_id):
-    with sqlite3.connect(DB_NAME) as conn:
-        c = conn.cursor()
-        if is_favorite(user_id, track_id):
-            c.execute("DELETE FROM favorites WHERE user_id=? AND track_id=?", (user_id, track_id))
+        conn.close()
+        return False
+    else:
+        c.execute(
+            "SELECT title, artist, url, telegram_file_id FROM downloads WHERE track_id = ? ORDER BY id DESC LIMIT 1",
+            (track_id,)
+        )
+        track = c.fetchone()
+        if track:
+            c.execute(
+                "INSERT OR IGNORE INTO favorites (user_id, track_id, title, artist, url, telegram_file_id) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, track_id, track[0], track[1], track[2], track[3])
+            )
             conn.commit()
-            return False # Удалено из избранного
-        else:
-            # Ищем трек в истории, чтобы вытащить его название и ссылку для сохранения в избранное
-            c.execute("SELECT title, artist, url FROM history WHERE user_id=? AND track_id=? ORDER BY id DESC LIMIT 1", (user_id, track_id))
-            row = c.fetchone()
-            if row:
-                c.execute("INSERT INTO favorites (user_id, track_id, title, artist, url) VALUES (?, ?, ?, ?, ?)",
-                          (user_id, track_id, row[0], row[1], row[2]))
-                conn.commit()
-                return True # Добавлено в избранное
-    return False
+        conn.close()
+        return True
 
-def get_favorites(user_id):
-    with sqlite3.connect(DB_NAME) as conn:
-        return conn.execute("SELECT id, track_id, title, artist, url FROM favorites WHERE user_id=? ORDER BY id DESC LIMIT 15", (user_id,)).fetchall()
+def is_favorite(user_id: int, track_id: str) -> bool:
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM favorites WHERE user_id = ? AND track_id = ?", (user_id, track_id))
+    row = c.fetchone()
+    conn.close()
+    return bool(row)
 
-def get_history(user_id):
-    with sqlite3.connect(DB_NAME) as conn:
-        return conn.execute("SELECT id, track_id, title, artist, url FROM history WHERE user_id=? ORDER BY id DESC", (user_id,)).fetchall()
+def get_favorites(user_id: int, limit: int = 5):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, track_id, title, artist, url FROM favorites WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        (user_id, limit)
+    )
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
-def get_track_by_db_id(table, db_id):
-    with sqlite3.connect(DB_NAME) as conn:
-        return conn.execute(f"SELECT url, title, artist, track_id FROM {table} WHERE id=?", (db_id,)).fetchone()
+def get_track_by_db_id(table: str, row_id: str):
+    if table not in ["downloads", "favorites"]:
+        return None
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute(f"SELECT url, title, artist, track_id FROM {table} WHERE id = ?", (row_id,))
+    row = c.fetchone()
+    conn.close()
+    return row
