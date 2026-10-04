@@ -15,6 +15,8 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     BotCommand,
+    BotCommandScopeDefault,
+    BotCommandScopeChat,
     InlineQuery,
     InlineQueryResultCachedAudio,
     InlineQueryResultArticle,
@@ -99,6 +101,7 @@ def get_profile_menu() -> InlineKeyboardMarkup:
 def get_admin_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Аналитика и статистика", callback_data="admin:stats")],
+        [InlineKeyboardButton(text="👥 Список пользователей", callback_data="admin:users_list")],
         [InlineKeyboardButton(text="📢 Рассылка сообщений", callback_data="admin:broadcast_prompt")],
         [InlineKeyboardButton(text="🩺 Диагностика системы", callback_data="admin:diag")],
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
@@ -107,14 +110,12 @@ def get_admin_menu() -> InlineKeyboardMarkup:
 @dp.message(Command("admin"))
 async def admin_command_handler(message: types.Message):
     if not is_admin(message.from_user.id):
-        await message.answer("⛔️ У вас нет прав доступа к панели управления.")
         return
-    await message.answer("⚡️ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
+    await message.answer("⚡️️ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "admin:menu")
 async def admin_menu_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Доступ ограничен!", show_alert=True)
         return
     await callback.message.edit_text("⚡️ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
     await callback.answer()
@@ -122,7 +123,6 @@ async def admin_menu_callback(callback: CallbackQuery):
 @dp.callback_query(F.data == "admin:stats")
 async def admin_stats_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Доступ ограничен!", show_alert=True)
         return
     
     stats = database.get_admin_stats()
@@ -149,10 +149,54 @@ async def admin_stats_callback(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=back_kb, parse_mode="HTML")
     await callback.answer()
 
+@dp.callback_query(F.data == "admin:users_list")
+async def admin_users_list_callback(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+
+    users = database.get_all_users_info()
+    if not users:
+        await callback.answer("В базе пока нет пользователей.", show_alert=True)
+        return
+
+    lines = []
+    for idx, u in enumerate(users, 1):
+        uname = f"@{u['username']}" if u['username'] else "<i>нет username</i>"
+        lines.append(f"{idx}. {uname} | <code>{u['user_id']}</code> | Скачано: <b>{u['downloads']}</b>")
+
+    full_body = "\n".join(lines)
+    header = f"👥 <b>Пользователи бота ({len(users)} чел.):</b>\n\n"
+
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:users_list")],
+        [InlineKeyboardButton(text="🔙 Назад в админку", callback_data="admin:menu")]
+    ])
+
+    if len(header + full_body) <= 3900:
+        await callback.message.edit_text(header + full_body, reply_markup=back_kb, parse_mode="HTML")
+    else:
+        file_path = "/tmp/users_list.txt"
+        with open(file_path, "w", encoding="utf-8") as f:
+            for idx, u in enumerate(users, 1):
+                uname = f"@{u['username']}" if u['username'] else "нет username"
+                f.write(f"{idx}. {uname} | ID: {u['user_id']} | Скачано: {u['downloads']} | Регистрация: {u['created_at']}\n")
+
+        await callback.message.answer_document(
+            document=FSInputFile(file_path, filename="users_list.txt"),
+            caption=f"👥 <b>Полный список пользователей ({len(users)} чел.):</b>",
+            parse_mode="HTML"
+        )
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+
+    await callback.answer()
+
 @dp.callback_query(F.data == "admin:diag")
 async def admin_diag_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Доступ ограничен!", show_alert=True)
         return
 
     ym_token_present = bool(os.getenv("YANDEX_MUSIC_TOKEN") or os.getenv("YANDEX_TOKEN"))
@@ -180,7 +224,6 @@ async def admin_diag_callback(callback: CallbackQuery):
 @dp.callback_query(F.data == "admin:broadcast_prompt")
 async def admin_broadcast_prompt(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Доступ ограничен!", show_alert=True)
         return
     
     USER_SESSIONS.setdefault(callback.from_user.id, {})["awaiting"] = "broadcast_input"
@@ -200,7 +243,6 @@ async def admin_broadcast_prompt(callback: CallbackQuery):
 async def admin_broadcast_confirm(callback: CallbackQuery):
     admin_id = callback.from_user.id
     if not is_admin(admin_id):
-        await callback.answer("Доступ ограничен!", show_alert=True)
         return
 
     broadcast_data = USER_SESSIONS.get(admin_id, {}).get("broadcast_draft")
@@ -247,11 +289,12 @@ async def admin_broadcast_cancel(callback: CallbackQuery):
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
+    user_id = message.from_user.id
     username = message.from_user.username or message.from_user.first_name
-    database.get_user(message.from_user.id, username)
+    database.get_user(user_id, username)
     
-    reply_kb = get_bottom_reply_keyboard(message.from_user.id)
-    inline_kb = get_main_menu(message.from_user.id)
+    reply_kb = get_bottom_reply_keyboard(user_id)
+    inline_kb = get_main_menu(user_id)
     
     welcome_text = (
         "👋 <b>Привет! Это NoMusic.</b>\n\n"
@@ -912,12 +955,24 @@ async def start_dummy_web_server():
     await site.start()
 
 async def set_bot_commands():
-    commands = [
+    # 1. Базовые команды для всех пользователей (команда /admin здесь отсутствует)
+    user_commands = [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="artist", description="Поиск дискографии артиста"),
+    ]
+    await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+
+    # 2. Персональный набор команд только для админов (включает /admin)
+    admin_commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="artist", description="Поиск дискографии артиста"),
         BotCommand(command="admin", description="Панель управления"),
     ]
-    await bot.set_my_commands(commands)
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception:
+            pass
 
 async def main():
     database.init_db()
