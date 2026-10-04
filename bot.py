@@ -256,6 +256,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         fallback_triggered = False
         results = await search_tracks(query, mode=user_mode, limit=15)
         
+        # Если Яндекс Музыка ничего не отдала (из-за иноагента или сложного названия)
         if not results and user_mode == "official":
             results = await search_tracks(query, mode="remix", limit=15)
             if results:
@@ -277,9 +278,9 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         kb = build_search_keyboard(user_id, page=0)
         
         if fallback_triggered:
-            text = "⚠️ <b>В Яндекс.Музыке трек не найден.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
+            text = "⚠️ <b>В Яндекс.Музыке по этому запросу ничего не найдено.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
         else:
-            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️️ Ремиксы (SoundCloud)"
+            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
             text = f"Результаты: <b>{mode_title}</b>"
 
         await status_msg.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -500,7 +501,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         kb_buttons = []
         smart_row = []
         
-        # Гарантированное добавление кнопок Альбома и Артиста к сообщению с треком
+        # Гарантированное добавление кнопок Альбома и Артиста
         a_id = artist_id if artist_id else track.get('artist_id')
         al_id = album_id if album_id else track.get('album_id')
 
@@ -513,7 +514,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             kb_buttons.append(smart_row)
 
         is_fav = database.is_favorite(user_id, track_id)
-        fav_text = "❤️️ В избранном" if is_fav else "🤍 В избранное"
+        fav_text = "❤️ В избранном" if is_fav else "🤍 В избранное"
         kb_buttons.append([InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")])
 
         kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
@@ -546,7 +547,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             except Exception:
                 pass
 
-# --- ИНЛАЙН РЕЖИМ (Работа по кэшу БД для обхода таймаутов) ---
+# --- ИНЛАЙН РЕЖИМ ---
 
 @dp.inline_query()
 async def inline_search_handler(inline_query: InlineQuery):
