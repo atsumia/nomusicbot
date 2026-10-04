@@ -277,7 +277,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         kb = build_search_keyboard(user_id, page=0)
         
         if fallback_triggered:
-            text = "⚠️ <b>В Яндекс.Музыке трек не найден.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
+            text = "⚠️ <b>В Яндекс.Музыке по этому запросу ничего не найдено.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
         else:
             mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
             text = f"Результаты: <b>{mode_title}</b>"
@@ -301,82 +301,7 @@ async def handle_search(message: types.Message):
     
     await perform_search_and_send(message.chat.id, user_id, query, mode, message=message)
 
-# --- Обработка умных кнопок ---
-
-@dp.callback_query(F.data.startswith("switch:"))
-async def callback_switch_source(callback: CallbackQuery):
-    target_mode = callback.data.split(":")[1]
-    user_id = callback.from_user.id
-    session = USER_SESSIONS.get(user_id, {})
-    query = session.get("query")
-    
-    if not query:
-        await callback.answer("Сессия устарела. Отправьте запрос заново.", show_alert=True)
-        return
-
-    await callback.message.delete()
-    await perform_search_and_send(callback.message.chat.id, user_id, query, target_mode, callback=callback)
-
-@dp.callback_query(F.data.startswith("album:"))
-async def callback_album(callback: CallbackQuery):
-    album_id = callback.data.split(":")[1]
-    user_id = callback.from_user.id
-    
-    await callback.message.edit_text("⏳ Загружаю треклист альбома...")
-    tracks = await get_ym_album_tracks(album_id)
-    
-    if not tracks:
-        await callback.answer("Не удалось загрузить альбом", show_alert=True)
-        return
-
-    USER_SESSIONS[user_id] = {
-        "query": f"Альбом {album_id}",
-        "mode": "official",
-        "results": tracks,
-        "items": {},
-        "current_page": 0
-    }
-    
-    album_title = tracks[0].get('album_title', 'Альбом')
-    kb = build_search_keyboard(user_id, page=0)
-    await callback.message.edit_text(f"💿 Альбом: <b>{album_title}</b>", reply_markup=kb, parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("artist_top:"))
-async def callback_artist_top(callback: CallbackQuery):
-    artist_id = callback.data.split(":")[1]
-    user_id = callback.from_user.id
-    
-    await callback.message.edit_text("⏳ Загружаю топ артиста...")
-    tracks = await get_ym_artist_top(artist_id)
-    
-    if not tracks:
-        await callback.answer("Не удалось загрузить популярное", show_alert=True)
-        return
-
-    USER_SESSIONS[user_id] = {
-        "query": f"Артист {artist_id}",
-        "mode": "official",
-        "results": tracks,
-        "items": {},
-        "current_page": 0
-    }
-    
-    artist_name = tracks[0].get('uploader', 'Артист')
-    kb = build_search_keyboard(user_id, page=0)
-    await callback.message.edit_text(f"👤 Популярное: <b>{artist_name}</b>", reply_markup=kb, parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("page:"))
-async def callback_pagination(callback: CallbackQuery):
-    page = int(callback.data.split("page:")[1])
-    if callback.from_user.id in USER_SESSIONS:
-        USER_SESSIONS[callback.from_user.id]["current_page"] = page
-    kb = build_search_keyboard(callback.from_user.id, page=page)
-    await callback.message.edit_reply_markup(reply_markup=kb)
-    await callback.answer()
-
-@dp.callback_query(F.data == "noop")
-async def callback_noop(callback: CallbackQuery):
-    await callback.answer()
+# --- Обработка клика по треку ---
 
 @dp.callback_query(F.data.startswith("dl:"))
 async def callback_download(callback: CallbackQuery):
@@ -409,12 +334,17 @@ async def callback_download(callback: CallbackQuery):
     await callback.answer()
     status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
     
+    # Передаем альбом и артиста напрямую из поисковой сессии
     await process_and_send_audio(
         callback.message.chat.id, 
         user_id, 
         item['id'], 
         item['url'], 
-        status_msg
+        status_msg,
+        artist_id=item.get('artist_id'),
+        album_id=item.get('album_id'),
+        artist_name=item.get('uploader'),
+        album_title=item.get('album_title')
     )
 
 @dp.callback_query(F.data.startswith("confirm_dl:"))
@@ -444,7 +374,11 @@ async def callback_confirm_download(callback: CallbackQuery):
         user_id, 
         item['id'], 
         item['url'], 
-        status_msg
+        status_msg,
+        artist_id=item.get('artist_id'),
+        album_id=item.get('album_id'),
+        artist_name=item.get('uploader'),
+        album_title=item.get('album_title')
     )
 
 @dp.callback_query(F.data == "back_to_results")
@@ -475,12 +409,94 @@ async def callback_dl_db(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
-async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message):
+# --- Обработка кнопок перехода к Альбому и Артисту ---
+
+@dp.callback_query(F.data.startswith("album:"))
+async def callback_album(callback: CallbackQuery):
+    album_id = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+    
+    await callback.answer("Загружаю альбом...")
+    # Отправляем НОВОЕ сообщение, так как редактировать текст аудиосообщения нельзя
+    status_msg = await callback.message.answer("💿 <i>Загружаю треклист альбома...</i>", parse_mode="HTML")
+    tracks = await get_ym_album_tracks(album_id)
+    
+    if not tracks:
+        await status_msg.edit_text("Не удалось загрузить треки альбома 🥲")
+        return
+
+    USER_SESSIONS[user_id] = {
+        "query": f"Альбом {album_id}",
+        "mode": "official",
+        "results": tracks,
+        "items": {},
+        "current_page": 0
+    }
+    
+    album_title = tracks[0].get('album_title') or 'Альбом'
+    kb = build_search_keyboard(user_id, page=0)
+    await status_msg.edit_text(f"💿 Альбом: <b>{album_title}</b>", reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("artist_top:"))
+async def callback_artist_top(callback: CallbackQuery):
+    artist_id = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+    
+    await callback.answer("Загружаю популярные треки...")
+    status_msg = await callback.message.answer("👤 <i>Загружаю популярные треки артиста...</i>", parse_mode="HTML")
+    tracks = await get_ym_artist_top(artist_id)
+    
+    if not tracks:
+        await status_msg.edit_text("Не удалось загрузить популярные треки 🥲")
+        return
+
+    USER_SESSIONS[user_id] = {
+        "query": f"Артист {artist_id}",
+        "mode": "official",
+        "results": tracks,
+        "items": {},
+        "current_page": 0
+    }
+    
+    artist_name = tracks[0].get('uploader') or 'Артист'
+    kb = build_search_keyboard(user_id, page=0)
+    await status_msg.edit_text(f"👤 Популярные треки: <b>{artist_name}</b>", reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("switch:"))
+async def callback_switch_source(callback: CallbackQuery):
+    target_mode = callback.data.split(":")[1]
+    user_id = callback.from_user.id
+    session = USER_SESSIONS.get(user_id, {})
+    query = session.get("query")
+    
+    if not query:
+        await callback.answer("Сессия устарела. Отправьте запрос заново.", show_alert=True)
+        return
+
+    await callback.message.delete()
+    await perform_search_and_send(callback.message.chat.id, user_id, query, target_mode, callback=callback)
+
+@dp.callback_query(F.data.startswith("page:"))
+async def callback_pagination(callback: CallbackQuery):
+    page = int(callback.data.split("page:")[1])
+    if callback.from_user.id in USER_SESSIONS:
+        USER_SESSIONS[callback.from_user.id]["current_page"] = page
+    kb = build_search_keyboard(callback.from_user.id, page=page)
+    await callback.message.edit_reply_markup(reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data == "noop")
+async def callback_noop(callback: CallbackQuery):
+    await callback.answer()
+
+# --- Отправка аудио с прикреплением кнопок Альбома и Артиста ---
+
+async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message, 
+                               artist_id: str = None, album_id: str = None, artist_name: str = None, album_title: str = None):
     file_path = None
     thumb_path = None
     try:
         await status_msg.edit_text("⏳ Загружаю аудиозапись...")
-        # Скачиваем трек и ОДНОВРЕМЕННО вытаскиваем его ID альбома/артиста 
         track = await download_track(url)
         file_path = track['file_path']
         thumb_path = track.get('thumb_path')
@@ -494,26 +510,27 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         audio = FSInputFile(path=file_path, filename=f"{track['artist']} - {track['title']}.mp3")
         thumbnail = FSInputFile(thumb_path) if thumb_path and os.path.exists(thumb_path) else None
 
-        kb_buttons = []
+        kb_rows = []
         smart_row = []
         
-        # Надежное формирование кнопок. Данные берутся из скачанного файла!
-        al_id = track.get('album_id')
-        a_id = track.get('artist_id')
+        # Гарантированное получение данных: сначала из поиска, затем из скачанного файла
+        final_album_id = album_id or track.get('album_id')
+        final_artist_id = artist_id or track.get('artist_id')
 
-        if al_id and str(al_id).strip() not in ["None", "", "0"]:
-            smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{al_id}"))
-        if a_id and str(a_id).strip() not in ["None", "", "0"]:
-            smart_row.append(InlineKeyboardButton(text="👤 Топ артиста", callback_data=f"artist_top:{a_id}"))
+        if final_album_id and str(final_album_id).strip() not in ["None", "", "0"]:
+            smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{final_album_id}"))
+            
+        if final_artist_id and str(final_artist_id).strip() not in ["None", "", "0"]:
+            smart_row.append(InlineKeyboardButton(text="👤 Все треки", callback_data=f"artist_top:{final_artist_id}"))
             
         if smart_row:
-            kb_buttons.append(smart_row)
+            kb_rows.append(smart_row)
 
         is_fav = database.is_favorite(user_id, track_id)
         fav_text = "❤️ В избранном" if is_fav else "🤍 В избранное"
-        kb_buttons.append([InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")])
+        kb_rows.append([InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")])
 
-        kb = InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+        kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
         sent_msg = await bot.send_audio(
             chat_id=chat_id,
@@ -543,7 +560,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             except Exception:
                 pass
 
-# --- ИНЛАЙН РЕЖИМ ---
+# --- Инлайн режим ---
 
 @dp.inline_query()
 async def inline_search_handler(inline_query: InlineQuery):
@@ -598,7 +615,7 @@ async def inline_search_handler(inline_query: InlineQuery):
         print(f"❌ [INLINE LOCAL DB ERROR]: {e}")
         await inline_query.answer([], cache_time=2, is_personal=True)
 
-# --- ВЕБ-сервер и запуск ---
+# --- Сервер и запуск ---
 
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
