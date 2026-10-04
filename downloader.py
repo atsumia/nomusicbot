@@ -227,8 +227,8 @@ def deduplicate_tracks(tracks: list) -> list:
 def strict_text_filter(tracks: list, original_query: str, normalized_query: str) -> list:
     filtered = []
     
-    orig_words = set(re.findall(r'\b\w{3,}\b', original_query.lower()))
-    norm_words = set(re.findall(r'\b\w{3,}\b', normalized_query.lower()))
+    orig_words = set(re.findall(r'\b\w{2,}\b', original_query.lower()))
+    norm_words = set(re.findall(r'\b\w{2,}\b', normalized_query.lower()))
     check_words = orig_words.union(norm_words)
     
     if not check_words:
@@ -243,11 +243,11 @@ def strict_text_filter(tracks: list, original_query: str, normalized_query: str)
 
 def rank_tracks_by_exact_match(tracks: list, original_query: str, normalized_query: str) -> list:
     """
-    Ранжирует треки так, чтобы точные совпадения с запросом в названии трека 
-    оказывались на самом верху списка.
+    Агрессивное ранжирование: треки, где есть ВСЕ слова из запроса (автор + название),
+    получают огромный буст и взлетают на 1-е место (решает проблему "плм маша").
     """
-    orig_words = set(re.findall(r'\b\w{3,}\b', original_query.lower()))
-    norm_words = set(re.findall(r'\b\w{3,}\b', normalized_query.lower()))
+    orig_words = set(re.findall(r'\b\w{2,}\b', original_query.lower()))
+    norm_words = set(re.findall(r'\b\w{2,}\b', normalized_query.lower()))
     check_words = orig_words.union(norm_words)
     
     if not check_words:
@@ -257,17 +257,26 @@ def rank_tracks_by_exact_match(tracks: list, original_query: str, normalized_que
         score = 0
         title_lower = t.get('title', '').lower()
         uploader_lower = t.get('uploader', '').lower()
+        combined = f"{uploader_lower} {title_lower}"
         
+        if original_query.lower() in combined or normalized_query.lower() in combined:
+            score += 200
+            
+        match_count = 0
         for word in check_words:
-            # Высший приоритет, если слово из запроса есть прямо в названии трека
             if word in title_lower:
                 score += 10
-            # Средний приоритет, если слово есть в имени артиста
+                match_count += 1
             elif word in uploader_lower:
                 score += 5
+                match_count += 1
+                
+        # Бонус за то, что все слова запроса присутствуют в треке
+        if match_count >= len(orig_words):
+            score += 100
+            
         return score
         
-    # Сортируем по убыванию score (чем больше score, тем выше трек в списке)
     return sorted(tracks, key=track_score, reverse=True)
 
 
@@ -311,10 +320,7 @@ async def search_yandex(query: str, limit: int = 15, original_query: str = ""):
     query_to_check = original_query if original_query else query
     filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
     
-    # Применяем интеллектуальное ранжирование
-    ranked_tracks = rank_tracks_by_exact_match(filtered_tracks, query_to_check, query)
-
-    return ranked_tracks[:limit]
+    return filtered_tracks
 
 async def get_ym_album_tracks(album_id: str):
     client = await get_ym_client()
@@ -468,15 +474,10 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
         })
         
     unique_tracks = deduplicate_tracks(results)
-    
-    # Жесткий фильтр теперь применяется и к мусору из SoundCloud!
     query_to_check = original_query if original_query else query
     filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
     
-    # Применяем интеллектуальное ранжирование
-    ranked_tracks = rank_tracks_by_exact_match(filtered_tracks, query_to_check, query)
-    
-    return ranked_tracks[:limit]
+    return filtered_tracks
 
 async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     os.makedirs(output_dir, exist_ok=True)
@@ -598,34 +599,72 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     normalized_query = await resolve_dynamic_query(query)
     
-    if mode == "official":
-        # Первый прогон (как ввел пользователь)
-        ym_results = await search_yandex(normalized_query, limit=limit, original_query=query)
-        
-        # Резервный прогон по оригинальной кириллице
-        if not ym_results and query.strip().lower() != normalized_query.lower():
-            ym_results = await search_yandex(query.strip(), limit=limit, original_query=query)
+    # 1. Генерируем массив запросов (включая перестановку слов, если Яндекс тупит)
+    queries_to_try = [normalized_query]
+    
+    # Разворачиваем слова (addiction lonown -> lonown addiction)
+    words = normalized_query.split()
+    if len(words) > 1:
+        mid = len(words) // 2
+        reversed_norm = " ".join(words[mid:] + words[:mid])
+        if reversed_norm not in queries_to_try:
+            queries_to_try.append(reversed_norm)
             
-        # УМНОЕ ПЕРЕМЕШИВАНИЕ СЛОВ (Reverse Fallback)
-        if not ym_results:
-            words = query.split()
-            # Если запрос состоит из нескольких слов, меняем первую половину со второй
-            if len(words) > 1:
-                mid = len(words) // 2
-                reversed_query = " ".join(words[mid:] + words[:mid])
-                reversed_normalized = await resolve_dynamic_query(reversed_query)
-                ym_results = await search_yandex(reversed_normalized, limit=limit, original_query=reversed_query)
+    # Добавляем оригинальный запрос и его реверс, если нормализация его изменила
+    if query.strip().lower() != normalized_query.lower():
+        if query.strip() not in queries_to_try:
+            queries_to_try.append(query.strip())
+        orig_words = query.strip().split()
+        if len(orig_words) > 1:
+            mid = len(orig_words) // 2
+            reversed_orig = " ".join(orig_words[mid:] + orig_words[:mid])
+            if reversed_orig not in queries_to_try:
+                queries_to_try.append(reversed_orig)
+
+    if mode == "official":
+        pool = []
+        for q in queries_to_try:
+            ym_results = await search_yandex(q, limit=limit, original_query=query)
+            pool.extend(ym_results)
+            
+            # Проверяем, нашли ли мы идеальное совпадение
+            best_match_found = False
+            check_words = set(re.findall(r'\b\w{2,}\b', query.lower()))
+            for t in ym_results:
+                text = f"{t.get('uploader','')} {t.get('title','')}".lower()
+                # Если все слова есть в треке, можно больше не мучить Яндекс
+                if check_words and all(w in text for w in check_words):
+                    best_match_found = True
+                    break
+            
+            if best_match_found:
+                break
                 
-                # Если и нормализованный реверс не помог, пробуем чистый реверс
-                if not ym_results and reversed_query.strip().lower() != reversed_normalized.lower():
-                     ym_results = await search_yandex(reversed_query.strip(), limit=limit, original_query=reversed_query)
+        if pool:
+            unique_pool = deduplicate_tracks(pool)
+            ranked = rank_tracks_by_exact_match(unique_pool, query, normalized_query)
+            return ranked[:limit]
 
-        if ym_results:
-            return ym_results
-
-    # Поиск в SoundCloud 
+    # SoundCloud logic (используем те же перестановки)
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, search_sc_sync, normalized_query, limit, query)
+    pool = []
+    for q in queries_to_try[:2]: # Максимум 2 запроса, чтобы не было долго
+        sc_results = await loop.run_in_executor(None, search_sc_sync, q, limit, query)
+        pool.extend(sc_results)
+        
+        best_match_found = False
+        check_words = set(re.findall(r'\b\w{2,}\b', query.lower()))
+        for t in sc_results:
+            text = f"{t.get('uploader','')} {t.get('title','')}".lower()
+            if check_words and all(w in text for w in check_words):
+                best_match_found = True
+                break
+        if best_match_found:
+            break
+            
+    unique_pool = deduplicate_tracks(pool)
+    ranked = rank_tracks_by_exact_match(unique_pool, query, normalized_query)
+    return ranked[:limit]
 
 async def download_track(url: str) -> dict:
     if url.startswith("ym://"):
