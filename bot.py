@@ -253,14 +253,7 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
 async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_mode: str, message: types.Message = None, callback: CallbackQuery = None):
     status_msg = await bot.send_message(chat_id, "🔎 Ищу варианты...")
     try:
-        fallback_triggered = False
         results = await search_tracks(query, mode=user_mode, limit=15)
-        
-        if not results and user_mode == "official":
-            results = await search_tracks(query, mode="remix", limit=15)
-            if results:
-                user_mode = "remix"
-                fallback_triggered = True
 
         if not results:
             await status_msg.edit_text("Ничего не нашлось. Попробуй изменить запрос.")
@@ -275,14 +268,8 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         }
 
         kb = build_search_keyboard(user_id, page=0)
-        
-        if fallback_triggered:
-            text = "⚠️ <b>В Яндекс.Музыке по этому запросу ничего не найдено.</b>\n☁️ <i>Автоматически показываю результаты из SoundCloud:</i>"
-        else:
-            mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
-            text = f"Результаты: <b>{mode_title}</b>"
-
-        await status_msg.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
+        await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
 
@@ -334,7 +321,6 @@ async def callback_download(callback: CallbackQuery):
     await callback.answer()
     status_msg = await callback.message.answer("⏳ Загрузка выбранного трека...")
     
-    # Передаем альбом и артиста напрямую из поисковой сессии
     await process_and_send_audio(
         callback.message.chat.id, 
         user_id, 
@@ -342,9 +328,7 @@ async def callback_download(callback: CallbackQuery):
         item['url'], 
         status_msg,
         artist_id=item.get('artist_id'),
-        album_id=item.get('album_id'),
-        artist_name=item.get('uploader'),
-        album_title=item.get('album_title')
+        album_id=item.get('album_id')
     )
 
 @dp.callback_query(F.data.startswith("confirm_dl:"))
@@ -376,9 +360,7 @@ async def callback_confirm_download(callback: CallbackQuery):
         item['url'], 
         status_msg,
         artist_id=item.get('artist_id'),
-        album_id=item.get('album_id'),
-        artist_name=item.get('uploader'),
-        album_title=item.get('album_title')
+        album_id=item.get('album_id')
     )
 
 @dp.callback_query(F.data == "back_to_results")
@@ -409,7 +391,7 @@ async def callback_dl_db(callback: CallbackQuery):
     status_msg = await callback.message.answer("⏳ Загрузка трека из базы...")
     await process_and_send_audio(callback.message.chat.id, callback.from_user.id, track_id, url, status_msg)
 
-# --- Обработка кнопок перехода к Альбому и Артисту ---
+# --- Кнопки Альбома и Артиста ---
 
 @dp.callback_query(F.data.startswith("album:"))
 async def callback_album(callback: CallbackQuery):
@@ -417,7 +399,6 @@ async def callback_album(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     await callback.answer("Загружаю альбом...")
-    # Отправляем НОВОЕ сообщение, так как редактировать текст аудиосообщения нельзя
     status_msg = await callback.message.answer("💿 <i>Загружаю треклист альбома...</i>", parse_mode="HTML")
     tracks = await get_ym_album_tracks(album_id)
     
@@ -489,10 +470,10 @@ async def callback_pagination(callback: CallbackQuery):
 async def callback_noop(callback: CallbackQuery):
     await callback.answer()
 
-# --- Отправка аудио с прикреплением кнопок Альбома и Артиста ---
+# --- Отправка аудио с прикреплением кнопок ---
 
 async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message, 
-                               artist_id: str = None, album_id: str = None, artist_name: str = None, album_title: str = None):
+                               artist_id: str = None, album_id: str = None):
     file_path = None
     thumb_path = None
     try:
@@ -513,9 +494,9 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         kb_rows = []
         smart_row = []
         
-        # Гарантированное получение данных: сначала из поиска, затем из скачанного файла
-        final_album_id = album_id or track.get('album_id')
-        final_artist_id = artist_id or track.get('artist_id')
+        # Гарантированное вытягивание идентификаторов альбома и артиста
+        final_album_id = track.get('album_id') or album_id
+        final_artist_id = track.get('artist_id') or artist_id
 
         if final_album_id and str(final_album_id).strip() not in ["None", "", "0"]:
             smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{final_album_id}"))
