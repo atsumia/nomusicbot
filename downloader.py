@@ -423,12 +423,11 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     }
 
 async def get_direct_stream_url(url: str) -> str:
-    """Получает прямую ссылку на аудиопоток. Добавляет .mp3, чтобы Telegram не браковал URL."""
+    """Ускоренное получение прямой ссылки на аудиопоток, подготовленной для плеера Telegram"""
     try:
         if url.startswith("ym://"):
             client = await get_ym_client()
-            if not client:
-                return None
+            if not client: return None
             track_id = url.replace("ym://", "")
             tracks = await client.tracks([track_id])
             if tracks:
@@ -436,19 +435,20 @@ async def get_direct_stream_url(url: str) -> str:
                 mp3_info = [i for i in info if i.codec == 'mp3']
                 best = max(mp3_info, key=lambda x: x.bitrate_in_kbps) if mp3_info else info[0]
                 link = await best.get_direct_link_async()
-                # Телеграм требует расширения аудиофайла в URL
-                return link + "&ext=.mp3" if "?" in link else link + "?ext=.mp3"
+                
+                # Маскируем под mp3 для обхода валидации Telegram
+                return f"{link}&ext=.mp3" if "?" in link else f"{link}?ext=.mp3"
         else:
             loop = asyncio.get_event_loop()
             def extract_sc_stream():
-                # skip_download=True кардинально ускоряет процесс для инлайна
+                # skip_download=True исключает тяжелые процессы конвертации при инлайн-вызове
                 ydl_opts = {'format': 'bestaudio', 'quiet': True, 'no_warnings': True, 'skip_download': True}
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     data = ydl.extract_info(url, download=False)
                     return data.get('url')
             return await loop.run_in_executor(None, extract_sc_stream)
     except Exception as e:
-        print(f"Error getting stream url: {e}")
+        print(f"Stream generation error: {e}")
         return None
 
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
