@@ -111,6 +111,13 @@
         </div>
     </header>
 
+    <!-- Уведомление (Toast) -->
+    <div id="toast" class="fixed top-16 left-4 right-4 z-50 transform -translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+        <div class="bg-apple-red text-white text-xs font-semibold px-4 py-3 rounded-2xl shadow-xl flex items-center space-x-2 justify-center">
+            <span id="toast-text">Уведомление</span>
+        </div>
+    </div>
+
     <!-- Основной контент -->
     <main class="max-w-md mx-auto px-4 pt-3">
         
@@ -244,8 +251,8 @@
                         <span class="font-semibold text-green-500">Включен (Haptic)</span>
                     </div>
                     <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Поисковый движок</span>
-                        <span class="font-semibold text-zinc-400">Синхронизирован с ботом</span>
+                        <span class="text-apple-textGray">Синхронизация</span>
+                        <span class="font-semibold text-apple-red" id="sync-status-badge">🟢 База данных подключена</span>
                     </div>
                 </div>
 
@@ -269,7 +276,6 @@
             </div>
         </div>
         <div class="flex items-center space-x-2 pl-2" onclick="event.stopPropagation()">
-            <!-- Нативная кнопка Play / Pause без эмодзи -->
             <button onclick="toggleAudioPlay()" id="mini-play-btn" class="w-10 h-10 rounded-full bg-apple-red text-white flex items-center justify-center active:scale-90 transition shadow-md">
                 <svg id="mini-icon-play" class="w-4 h-4 fill-white ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                 <svg id="mini-icon-pause" class="w-4 h-4 fill-white hidden" viewBox="0 0 24 24">
@@ -287,7 +293,7 @@
                 ✕
             </button>
             <span class="text-xs uppercase tracking-widest text-apple-textGray font-semibold">Сейчас играет</span>
-            <!-- Кнопка отправить трек в личку бота -->
+            <!-- Кнопка отправить трек в чат бота -->
             <button onclick="sendTrackToTelegram()" title="Скачать в Telegram" class="w-8 h-8 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center text-xs active:scale-90 transition">
                 <svg class="w-4 h-4 text-apple-red" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
             </button>
@@ -335,11 +341,11 @@
                 </button>
             </div>
 
-            <!-- Быстрая кнопка отправки трека в личку -->
+            <!-- Кнопка отправки полного MP3 в чат -->
             <div class="pt-2">
-                <button onclick="sendTrackToTelegram()" class="w-full py-3 bg-black/5 dark:bg-white/10 rounded-2xl text-xs font-semibold flex items-center justify-center space-x-2 active:scale-95 transition">
+                <button onclick="sendTrackToTelegram()" id="download-chat-btn" class="w-full py-3 bg-black/5 dark:bg-white/10 rounded-2xl text-xs font-semibold flex items-center justify-center space-x-2 active:scale-95 transition">
                     <svg class="w-4 h-4 text-apple-red" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                    <span>Скачать полный MP3 (320 kbps) в чат</span>
+                    <span id="download-chat-btn-text">Скачать полный MP3 (320 kbps) в чат</span>
                 </button>
             </div>
         </div>
@@ -370,7 +376,7 @@
     <audio id="audio-engine" preload="none"></audio>
 
     <script>
-        // АДРЕС БЭКЕНДА НА РЕНДЕРЕ (замените при необходимости на свой точный Render URL)
+        // АДРЕС БЭКЕНДА НА RENDER
         const BACKEND_URL = "https://nomusicbot.onrender.com";
 
         const tg = window.Telegram?.WebApp;
@@ -392,14 +398,23 @@
         document.getElementById('profile-avatar-big').innerText = initialLetter;
 
         let liveTrendingTracks = [];
-        let favorites = JSON.parse(localStorage.getItem('nomusic_favs') || '[]');
-        let history = JSON.parse(localStorage.getItem('nomusic_hist') || '[]');
+        let favorites = [];
+        let history = [];
         let currentTrack = null;
         let isPlaying = false;
         let activeSearchMode = 'official';
         let currentLibTab = 'favs';
 
         const audio = document.getElementById('audio-engine');
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-text').innerText = msg;
+            toast.classList.remove('-translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                toast.classList.add('-translate-y-20', 'opacity-0');
+            }, 3000);
+        }
 
         function toggleTheme() {
             document.documentElement.classList.toggle('dark');
@@ -413,6 +428,31 @@
                 if (type === 'light') tg.HapticFeedback.impactOccurred('light');
                 else if (type === 'medium') tg.HapticFeedback.impactOccurred('medium');
                 else if (type === 'selection') tg.HapticFeedback.selectionChanged();
+                else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+            }
+        }
+
+        // ЗАГРУЗКА РЕАЛЬНЫХ ДАННЫХ ИЗ БАЗЫ ДАННЫХ БОТА (SQLite)
+        async function syncUserDataWithBackend() {
+            if (!tgUser.id) return;
+            try {
+                const resp = await fetch(`${BACKEND_URL}/api/user_data?user_id=${tgUser.id}`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.favorites) {
+                        favorites = data.favorites;
+                        updateFavBadge();
+                    }
+                    if (data.history) {
+                        history = data.history;
+                    }
+                    if (data.search_mode) {
+                        setSearchMode(data.search_mode, false);
+                    }
+                    document.getElementById('sync-status-badge').innerText = '🟢 База данных подключена';
+                }
+            } catch (e) {
+                document.getElementById('sync-status-badge').innerText = '🟡 Автономный режим';
             }
         }
 
@@ -457,7 +497,7 @@
         }
 
         function initArtistsGrid() {
-            const artists = ['MACAN', 'CUPSIZE', 'ПОЛМАТЕРИ', 'Oxxxymiron', 'Miyagi', 'FRIENDLY THUG'];
+            const artists = ['MACAN', 'CUPSIZE', 'ПОЛМАТЕРИ', 'Oxxxymiron', 'Miyagi', 'FRIENDLY THUG 52 NGG'];
             const artistsGrid = document.getElementById('artists-grid');
             artistsGrid.innerHTML = '';
             artists.forEach(artist => {
@@ -485,9 +525,8 @@
         function clearUserHistory() {
             haptic('medium');
             history = [];
-            localStorage.setItem('nomusic_hist', JSON.stringify(history));
             if (currentLibTab === 'hist') renderLibrary();
-            alert('История прослушиваний очищена.');
+            showToast('История прослушиваний очищена');
         }
 
         function switchTab(tabId) {
@@ -512,7 +551,7 @@
             }
         }
 
-        function setSearchMode(mode) {
+        function setSearchMode(mode, doSearch = true) {
             haptic('selection');
             activeSearchMode = mode;
             const offBtn = document.getElementById('mode-official-btn');
@@ -525,16 +564,22 @@
                 scBtn.className = 'flex-1 py-1.5 rounded-lg bg-white dark:bg-zinc-800 text-apple-red font-bold shadow-sm transition';
                 offBtn.className = 'flex-1 py-1.5 rounded-lg text-apple-textGray transition';
             }
-            performSearch(document.getElementById('live-search-input').value);
+            if (doSearch) {
+                performSearch(document.getElementById('live-search-input').value);
+            }
         }
 
         const searchInput = document.getElementById('live-search-input');
         const clearBtn = document.getElementById('clear-search-btn');
+        let searchDebounce = null;
 
         searchInput.addEventListener('input', (e) => {
             const query = e.target.value.trim();
             clearBtn.classList.toggle('hidden', query.length === 0);
-            performSearch(query);
+            clearTimeout(searchDebounce);
+            searchDebounce = setTimeout(() => {
+                performSearch(query);
+            }, 350);
         });
 
         function clearSearch() {
@@ -543,22 +588,22 @@
             performSearch('');
         }
 
-        // Поиск через бэкенд бота с автоматической подстраховкой
+        // НАСТОЯЩИЙ ПОИСК ЧЕРЕЗ БЭКЕНД БОТА С АЛИАСАМИ
         async function performSearch(query) {
             const list = document.getElementById('search-list');
             if (!query) {
-                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Введите название трека или имя артиста.<br>Поиск подключен напрямую к алгоритмам бота.</div>`;
+                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Введите название трека или имя артиста.<br>Поиск подключен напрямую к поисковому ядру бота.</div>`;
                 return;
             }
 
-            list.innerHTML = `<div class="text-center py-12 text-apple-textGray text-xs animate-pulse">Поиск по каталогу...</div>`;
+            list.innerHTML = `<div class="text-center py-12 text-apple-textGray text-xs animate-pulse">Запрос к NoMusic Server...</div>`;
 
             let tracks = [];
 
-            // 1. Попытка запросить бэкенд бота
+            // 1. Запрос к бэкенду NoMusic на Render (таймаут 8 секунд для надежности)
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 2500);
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
                 const bResp = await fetch(`${BACKEND_URL}/api/search?q=${encodeURIComponent(query)}&mode=${activeSearchMode}`, {
                     signal: controller.signal
                 });
@@ -570,10 +615,10 @@
                     }
                 }
             } catch (backendErr) {
-                // Если Render засыпает — срабатывает прямой клиентский фоллбэк
+                console.log("Backend offline or slow, fallback to Storefront");
             }
 
-            // 2. Фоллбэк: прямой запрос к Apple Music витрине
+            // 2. Страховочный поиск (если сервер перезагружается)
             if (tracks.length === 0) {
                 try {
                     const resp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=ru&entity=song&limit=15`);
@@ -639,7 +684,7 @@
             const list = currentLibTab === 'favs' ? favorites : history;
 
             if (list.length === 0) {
-                container.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">${currentLibTab === 'favs' ? 'В избранном пока пусто ❤️' : 'История пуста 📜'}</div>`;
+                container.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">${currentLibTab === 'favs' ? 'В избранном бота пока пусто ❤️' : 'История пуста 📜'}</div>`;
                 return;
             }
 
@@ -648,7 +693,7 @@
                 row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
                 row.innerHTML = `
                     <div class="flex items-center space-x-3 overflow-hidden">
-                        <img src="${track.cover || ''}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
+                        <img src="${track.cover || 'https://placehold.co/100x100/1C1C1E/FFFFFF?text=NM'}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
                         <div class="truncate">
                             <h4 class="font-bold text-xs truncate">${track.title}</h4>
                             <p class="text-[11px] text-apple-textGray truncate">${track.artist || track.uploader || 'Артист'}</p>
@@ -668,17 +713,16 @@
             currentTrack = track;
             
             history = [track, ...history.filter(t => t.id !== track.id)].slice(0, 30);
-            localStorage.setItem('nomusic_hist', JSON.stringify(history));
 
             const mini = document.getElementById('mini-player-bar');
             mini.classList.remove('hidden');
             document.getElementById('mini-player-title').innerText = track.title;
             document.getElementById('mini-player-artist').innerText = track.artist || track.uploader || 'Артист';
-            document.getElementById('mini-player-cover').src = track.cover;
+            document.getElementById('mini-player-cover').src = track.cover || 'https://placehold.co/100x100/1C1C1E/FFFFFF?text=NM';
 
             document.getElementById('full-title').innerText = track.title;
             document.getElementById('full-artist').innerText = track.artist || track.uploader || 'Артист';
-            document.getElementById('full-cover').src = track.cover;
+            document.getElementById('full-cover').src = track.cover || 'https://placehold.co/100x100/1C1C1E/FFFFFF?text=NM';
             updateFavIcon();
 
             if (track.audio) {
@@ -690,6 +734,9 @@
                     isPlaying = true;
                     updatePlayButtons();
                 });
+            } else {
+                isPlaying = false;
+                updatePlayButtons();
             }
         }
 
@@ -705,7 +752,6 @@
             updatePlayButtons();
         }
 
-        // Обновление векторных SVG кнопок Play/Pause
         function updatePlayButtons() {
             const miniPlay = document.getElementById('mini-icon-play');
             const miniPause = document.getElementById('mini-icon-pause');
@@ -766,7 +812,8 @@
             document.getElementById('player-modal').classList.add('translate-y-full');
         }
 
-        function toggleFavoriteCurrent() {
+        // СИНХРОНИЗАЦИЯ ИЗБРАННОГО ПРЯМО В БАЗУ SQLite
+        async function toggleFavoriteCurrent() {
             if (!currentTrack) return;
             haptic('medium');
             const exists = favorites.some(t => t.id === currentTrack.id);
@@ -775,9 +822,24 @@
             } else {
                 favorites.unshift(currentTrack);
             }
-            localStorage.setItem('nomusic_favs', JSON.stringify(favorites));
             updateFavIcon();
             updateFavBadge();
+
+            if (tgUser.id) {
+                try {
+                    await fetch(`${BACKEND_URL}/api/favorite`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: tgUser.id,
+                            track_id: currentTrack.id,
+                            title: currentTrack.title,
+                            artist: currentTrack.artist || currentTrack.uploader,
+                            url: currentTrack.url
+                        })
+                    });
+                } catch (e) {}
+            }
         }
 
         function updateFavIcon() {
@@ -791,22 +853,49 @@
             }
         }
 
-        // Отправка запроса в Telegram на скачивание полного 320 kbps трека
-        function sendTrackToTelegram() {
+        // ПРЯМАЯ ОТПРАВКА ТРЕКА В ЧАТ ЧЕРЕЗ API СЕРВЕРА
+        async function sendTrackToTelegram() {
             if (!currentTrack) return;
-            haptic('medium');
-            const queryText = `${currentTrack.artist || currentTrack.uploader || ''} - ${currentTrack.title}`;
+            haptic('success');
             
+            const btnText = document.getElementById('download-chat-btn-text');
+            btnText.innerText = "⏳ Отправляю команду в бот...";
+            
+            const queryText = `${currentTrack.artist || currentTrack.uploader || ''} - ${currentTrack.title}`;
+
+            if (tgUser.id) {
+                try {
+                    const resp = await fetch(`${BACKEND_URL}/api/download`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: tgUser.id,
+                            query: queryText,
+                            track_id: currentTrack.id,
+                            url: currentTrack.url
+                        })
+                    });
+                    if (resp.ok) {
+                        showToast("🚀 Загрузка началась! Проверьте чат бота.");
+                        setTimeout(() => {
+                            btnText.innerText = "Скачать полный MP3 (320 kbps) в чат";
+                        }, 2500);
+                        return;
+                    }
+                } catch (e) {}
+            }
+
+            // Запасной вариант через sendData
             if (tg?.sendData) {
                 tg.sendData(JSON.stringify({ action: "download_track", query: queryText, id: currentTrack.id }));
-            } else {
-                window.open(`https://t.me/share/url?url=${encodeURIComponent(queryText)}`, '_blank');
             }
+            btnText.innerText = "Скачать полный MP3 (320 kbps) в чат";
         }
 
+        // Инициализация
+        syncUserDataWithBackend();
         loadTrendingReleases();
         initArtistsGrid();
-        updateFavBadge();
     </script>
 </body>
 </html>
