@@ -10,6 +10,7 @@ from shazamio import Shazam
 from yandex_music import ClientAsync
 from dotenv import load_dotenv
 import yt_dlp
+import database
 
 load_dotenv()
 
@@ -21,8 +22,12 @@ CENSORSHIP_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-# Каталог артистов первого эшелона (Headliners / Верифицированные артисты)
-# Используется для глобального приоритизирования студийных хитов перед треками малоизвестных авторов
+# Паттерн для поиска купюр и скрытой цензуры в текстах песен
+CENSORED_LYRICS_PATTERN = re.compile(
+    r'(?:\*{2,}|_{2,}|\[цензура\]|\[вырезано\]|\b[а-яa-z]\*{2,}[а-яa-z]?\b)',
+    re.IGNORECASE
+)
+
 HEADLINER_ARTISTS = {
     'og buda', 'kizaru', 'big baby tape', 'aarne', 'macan', 'oxxxymiron', 'miyagi',
     'andy panda', 'скриптонит', 'pharaoh', 'friendly thug 52 ngg', 'friendly thug',
@@ -175,6 +180,84 @@ async def get_ym_client():
 
     return ym_client
 
+async def check_ym_track_censorship(client: ClientAsync, target_track) -> bool:
+    """
+    Легковесный фоновый анализ официального текста трека из Яндекс Музыки.
+    """
+    if not client or not target_track:
+        return False
+
+    try:
+        lyrics_text = None
+        if hasattr(target_track, 'get_lyrics_async'):
+            lyrics_obj = await asyncio.wait_for(target_track.get_lyrics_async(format_='TEXT'), timeout=1.2)
+            if lyrics_obj:
+                lyrics_text = getattr(lyrics_obj, 'full_lyrics', None) or getattr(lyrics_obj, 'text', None) or str(lyrics_obj)
+
+        if not lyrics_text and hasattr(client, 'tracks_lyrics'):
+            lyrics_resp = await asyncio.wait_for(client.tracks_lyrics(target_track.id, format='TEXT'), timeout=1.2)
+            if lyrics_resp:
+                lyrics_text = getattr(lyrics_resp, 'full_lyrics', None) or getattr(lyrics_resp, 'text', None) or str(lyrics_resp)
+
+        if lyrics_text and CENSORED_LYRICS_PATTERN.search(lyrics_text):
+            return True
+    except Exception:
+        pass
+
+    return False
+
+async def fast_resolve_track_censorship(track_dict: dict) -> bool:
+    """
+    Мгновенно проверяет статус цензуры по SQLite кэшу.
+    Если трека в кэше нет — делает точечный сетевой запрос к текстам Яндекса с таймаутом 0.8с.
+    """
+    title = track_dict.get('title', '')
+    artist = track_dict.get('uploader', '')
+    if not title or not artist:
+        return track_dict.get('is_censored', False)
+
+    sig = f"{normalize_text_ru(artist)} - {normalize_text_ru(title)}"
+    cached = database.get_cached_censorship(sig)
+    if cached is not None:
+        return cached
+
+    # Если уже по метаданным Apple определена цензура, сохраняем в кэш
+    if track_dict.get('is_censored', False):
+        database.set_cached_censorship(sig, True)
+        return True
+
+    # Быстрый опрос Яндекса с лимитом 0.8 секунды
+    try:
+        client = await get_ym_client()
+        if not client:
+            return False
+
+        track_id = track_dict.get('raw_id')
+        is_ym_direct = str(track_dict.get('id', '')).startswith('am_ym_')
+        target_ym_track = None
+
+        if is_ym_direct and track_id and track_id.isdigit():
+            tracks_info = await asyncio.wait_for(client.tracks([int(track_id)]), timeout=0.8)
+            if tracks_info:
+                target_ym_track = tracks_info[0]
+        else:
+            sr = await asyncio.wait_for(client.search(text=f"{artist} - {title}", type_='track', page=0), timeout=0.8)
+            if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+                target_ym_track = sr.tracks.results[0]
+
+        if target_ym_track:
+            has_cuts = await asyncio.wait_for(check_ym_track_censorship(client, target_ym_track), timeout=0.8)
+            if has_cuts:
+                database.set_cached_censorship(sig, True)
+                return True
+            else:
+                database.set_cached_censorship(sig, False)
+                return False
+    except Exception:
+        pass
+
+    return False
+
 def normalize_search_query(query: str) -> str:
     if not query:
         return ""
@@ -208,7 +291,7 @@ def deduplicate_tracks(tracks: list) -> list:
     seen = set()
     unique = []
     for t in tracks:
-        key = f"{normalize_text_ru(t.get('uploader', ''))} - {normalize_text_ru(t.get('title', ''))} - {t.get('is_censored', False)}"
+        key = f"{normalize_text_ru(t.get('uploader', ''))} - {normalize_text_ru(t.get('title', ''))}"
         if key not in seen:
             seen.add(key)
             unique.append(t)
@@ -317,8 +400,7 @@ def score_and_sort_tracks(tracks: list, query: str) -> list:
         elif norm_q in t_artist:
             score += 30
 
-        # 4. РЕЙТИНГ ВЕРИФИЦИРОВАННЫХ ХЕДЛАЙНЕРОВ
-        # Позволяет трекам ведущих артистов (OG Buda, kizaru, Big Baby Tape) уверенно обходить любительские синглы
+        # 4. Рейтинг верифицированных хедлайнеров
         if is_headliner_artist(t.get('uploader', '')):
             score += 150
 
@@ -395,7 +477,6 @@ async def search_apple_catalog(query: str, limit: int = 15):
                         raw_art_id = str(item.get('artistId', ''))
                         raw_alb_id = str(item.get('collectionId', ''))
 
-                        # Префиксируем ID платформой для надежной навигации
                         tagged_artist_id = f"am_{raw_art_id}" if raw_art_id else ""
                         tagged_album_id = f"am_{raw_alb_id}" if raw_alb_id else ""
 
@@ -506,8 +587,19 @@ async def search_apple_catalog(query: str, limit: int = 15):
         print(f"❌ [OFFICIAL SEARCH AGGREGATOR ERROR]: {e}")
 
     unique = deduplicate_tracks(results)
-    ranked = score_and_sort_tracks(unique, query)
-    return ranked[:limit]
+    ranked = score_and_sort_tracks(unique, query)[:limit]
+
+    # ПАРАЛЛЕЛЬНАЯ LIVE-ДЕТЕКЦИЯ ЦЕНЗУРЫ ТОП-5 ТРЕКОВ
+    # Опрашиваем строго первые 5 позиций для экрана пользователя
+    top_candidates = ranked[:5]
+    if top_candidates:
+        censor_tasks = [fast_resolve_track_censorship(t) for t in top_candidates]
+        censor_flags = await asyncio.gather(*censor_tasks, return_exceptions=True)
+        for idx, flag in enumerate(censor_flags):
+            if isinstance(flag, bool) and flag:
+                top_candidates[idx]['is_censored'] = True
+
+    return ranked
 
 async def search_tracks_by_lyrics(query: str, limit: int = 15) -> list:
     query_clean = query.strip()
@@ -588,7 +680,6 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
     clean_query = str(artist_query).strip()
 
     if mode == "official":
-        # 1. Если передан явный ID Яндекс Музыки
         if clean_query.startswith("ym_") or clean_query.startswith("ym:"):
             ym_art_id = clean_query.replace("ym_", "").replace("ym:", "").strip()
             client = await get_ym_client()
@@ -641,7 +732,6 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
                 except Exception as e:
                     print(f"❌ [YM ARTIST DISCOGRAPHY ERROR]: {e}")
 
-        # 2. Обработка Apple Music ID или поиск по имени
         normalized_artist = normalize_search_query(clean_query.replace("am_", "").replace("am:", ""))
         target_name = normalized_artist or clean_query
         pure_id = clean_query.replace("am_", "").replace("am:", "").strip()
@@ -734,7 +824,6 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
                 except Exception as e:
                     print(f"❌ [APPLE LOOKUP ERROR {country}]: {e}")
 
-        # Универсальный Fallback: если ID не дал результат, ищем по подтвержденному имени
         if not tracks and target_name and not target_name.isdigit():
             tracks = await search_apple_catalog(target_name, limit=limit)
             for t in tracks:
@@ -753,7 +842,6 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
 async def get_am_album_tracks(album_id: str):
     clean_id = str(album_id).strip()
 
-    # 1. Если альбом из базы Яндекс Музыки
     if clean_id.startswith("ym_") or clean_id.startswith("ym:"):
         ym_alb_id = clean_id.replace("ym_", "").replace("ym:", "").strip()
         client = await get_ym_client()
@@ -804,7 +892,6 @@ async def get_am_album_tracks(album_id: str):
             except Exception as e:
                 print(f"❌ [YM ALBUM LOOKUP ERROR]: {e}")
 
-    # 2. Если альбом из Apple Music
     pure_id = clean_id.replace("am_", "").replace("am:", "").strip()
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -812,7 +899,6 @@ async def get_am_album_tracks(album_id: str):
     }
 
     tracks = []
-    # Каскадный опрос витрин KZ -> RU -> US гарантирует нахождение релиза
     for country in ['kz', 'ru', 'us']:
         url = f"https://itunes.apple.com/lookup?id={pure_id}&entity=song&explicit=Yes&country={country}"
         try:
@@ -956,19 +1042,33 @@ async def download_official_track(url_data: str, output_dir: str = "/tmp") -> di
     try:
         ym_query = f"{artist} - {title}"
         sr = await client.search(text=ym_query, type_='track', page=0)
+        target_ym_track = None
+
         if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
             target_ym_track = sr.tracks.results[0]
-            await target_ym_track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
-            download_success = True
-            print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 для {ym_query}")
         else:
             alt_query = f"{artist} {title}"
             sr = await client.search(text=alt_query, type_='track', page=0)
             if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
                 target_ym_track = sr.tracks.results[0]
-                await target_ym_track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
+
+        if target_ym_track:
+            dl_task = target_ym_track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
+            lyrics_task = check_ym_track_censorship(client, target_ym_track)
+
+            dl_res, has_lyrics_cuts = await asyncio.gather(dl_task, lyrics_task, return_exceptions=True)
+
+            if not isinstance(dl_res, Exception):
                 download_success = True
-                print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 (по alt-запросу) для {alt_query}")
+                print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 для {artist} — {title}")
+                
+                sig = f"{normalize_text_ru(artist)} - {normalize_text_ru(title)}"
+                if isinstance(has_lyrics_cuts, bool) and has_lyrics_cuts:
+                    is_censored = True
+                    database.set_cached_censorship(sig, True)
+                    print(f"✂️ [YM LYRICS DETECTED]: Обнаружены скрытые купюры (***) -> сохранён статус Clean")
+                else:
+                    database.set_cached_censorship(sig, is_censored)
     except Exception as e:
         print(f"❌ [YM STREAM ERROR]: Ошибка загрузки из официального каталога: {e}")
         raise Exception("Не удалось выгрузить аудиозапись с официальной площадки (ограничение прав или региона).")
