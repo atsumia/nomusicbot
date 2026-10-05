@@ -159,7 +159,7 @@ async def get_ym_client():
     yandex_proxy = os.getenv("YANDEX_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
 
     if not yandex_token:
-        print("⚠️ [YM]: Токен Яндекс Музыки (YANDEX_MUSIC_TOKEN) не обнаружен в окружении.")
+        print("⚠️️ [YM]: Токен Яндекс Музыки (YANDEX_MUSIC_TOKEN) не обнаружен в окружении.")
 
     try:
         kwargs = {}
@@ -208,7 +208,7 @@ async def check_ym_track_censorship(client: ClientAsync, target_track) -> bool:
 
 async def fast_resolve_track_censorship(track_dict: dict) -> bool:
     """
-    Мгновенно проверяет статус цензуры по SQLite кэшу.
+    Мгновенно проверяет статус цензуры по SQLite кэшу для официальных треков.
     Если трека в кэше нет — делает точечный сетевой запрос к текстам Яндекса с таймаутом 0.8с.
     """
     title = track_dict.get('title', '')
@@ -589,8 +589,7 @@ async def search_apple_catalog(query: str, limit: int = 15):
     unique = deduplicate_tracks(results)
     ranked = score_and_sort_tracks(unique, query)[:limit]
 
-    # ПАРАЛЛЕЛЬНАЯ LIVE-ДЕТЕКЦИЯ ЦЕНЗУРЫ ТОП-5 ТРЕКОВ
-    # Опрашиваем строго первые 5 позиций для экрана пользователя
+    # ПАРАЛЛЕЛЬНАЯ LIVE-ДЕТЕКЦИЯ ЦЕНЗУРЫ ТОП-5 ТРЕКОВ (ТОЛЬКО ОФИЦИАЛЬНЫЕ РЕЛИЗЫ)
     top_candidates = ranked[:5]
     if top_candidates:
         censor_tasks = [fast_resolve_track_censorship(t) for t in top_candidates]
@@ -997,16 +996,16 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
         raw_title = entry.get('title', 'Без названия')
         raw_uploader = entry.get('uploader') or 'Неизвестный автор'
         
-        censored_flag = is_track_censored(raw_title)
         parsed_artist, parsed_title = parse_sc_title_and_artist(raw_title, raw_uploader)
 
+        # ДЛЯ SOUNDCLOUD ЦЕНЗУРА ВСЕГДА ВЫКЛЮЧЕНА (is_censored = False)
         results.append({
             'id': f"sc_{eid}",
             'title': parsed_title,
             'uploader': parsed_artist,
             'url': url,
             'duration': entry.get('duration') or 0,
-            'is_censored': censored_flag,
+            'is_censored': False,
             'source': 'soundcloud'
         })
 
@@ -1165,7 +1164,10 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
 
     raw_title = raw_info.get('title', 'Track')
     raw_uploader = raw_info.get('uploader') or raw_info.get('channel', 'Artist')
-    is_censored = is_track_censored(raw_title)
+    
+    # Для SoundCloud цензура всегда отключена
+    is_censored = False
+    
     final_artist, final_title = parse_sc_title_and_artist(raw_title, raw_uploader)
     cover_url = raw_info.get('thumbnail')
 
@@ -1248,7 +1250,7 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'artist_id': None,
         'album_id': None,
         'album_title': None,
-        'is_censored': is_censored
+        'is_censored': False
     }
 
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
