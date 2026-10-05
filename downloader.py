@@ -16,12 +16,33 @@ load_dotenv()
 shazam = Shazam()
 ym_client = None
 
+CENSORSHIP_PATTERN = re.compile(
+    r'\b(clean|clean\s*version|censored|radio\s*edit|radio\s*version|цензур(?:а|ная|ный|ом|кой)?|без\s*мата|запикано|cut\s*version)\b',
+    re.IGNORECASE
+)
+
 def normalize_text_ru(text: str) -> str:
     if not text:
         return ""
     cleaned = text.lower().replace('ё', 'е')
     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
     return re.sub(r'\s+', ' ', cleaned).strip()
+
+def is_track_censored(track_name: str, explicitness: str = "", album_name: str = "") -> bool:
+    """
+    Определяет, подверглась ли композиция цензуре:
+    - По официальному флагу стриминговых витрин: trackExplicitness == 'cleaned'
+    - По маркерам в названии (Clean, Radio Edit, Цензура, Без мата и т.д.)
+    Оригинальные треки (включая Explicit 18+ и треки без мата изначально) возвращают False.
+    """
+    if str(explicitness).lower().strip() == 'cleaned':
+        return True
+    
+    combined_meta = f"{track_name} {album_name}"
+    if CENSORSHIP_PATTERN.search(combined_meta):
+        return True
+        
+    return False
 
 async def get_ym_client():
     global ym_client
@@ -126,7 +147,7 @@ def deduplicate_tracks(tracks: list) -> list:
     seen = set()
     unique = []
     for t in tracks:
-        key = f"{normalize_text_ru(t.get('uploader', ''))} - {normalize_text_ru(t.get('title', ''))}"
+        key = f"{normalize_text_ru(t.get('uploader', ''))} - {normalize_text_ru(t.get('title', ''))} - {t.get('is_censored', False)}"
         if key not in seen:
             seen.add(key)
             unique.append(t)
@@ -229,6 +250,11 @@ async def search_apple_catalog(query: str, limit: int = 15):
                         tid = str(item.get('trackId'))
                         title = item.get('trackName', 'Без названия')
                         artist = item.get('artistName', 'Артист')
+                        album_title = item.get('collectionName', '')
+                        explicitness = str(item.get('trackExplicitness', ''))
+                        
+                        censored_flag = is_track_censored(title, explicitness=explicitness, album_name=album_title)
+                        
                         raw_art = item.get('artworkUrl100', '')
                         cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
                         dur_sec = int((item.get('trackTimeMillis') or 0) / 1000)
@@ -241,7 +267,8 @@ async def search_apple_catalog(query: str, limit: int = 15):
                             'cover': cover_hq or '',
                             'artist_id': str(item.get('artistId', '')),
                             'album_id': str(item.get('collectionId', '')),
-                            'album_title': item.get('collectionName', '')
+                            'album_title': album_title,
+                            'censored': '1' if censored_flag else '0'
                         }
                         encoded_url = "am://" + urllib.parse.urlencode(params)
                         
@@ -254,8 +281,9 @@ async def search_apple_catalog(query: str, limit: int = 15):
                             'duration': dur_sec,
                             'artist_id': str(item.get('artistId', '')) or None,
                             'album_id': str(item.get('collectionId', '')) or None,
-                            'album_title': item.get('collectionName') or None,
+                            'album_title': album_title or None,
                             'cover_url': cover_hq,
+                            'is_censored': censored_flag,
                             'source': 'official'
                         })
     except Exception as e:
@@ -340,6 +368,7 @@ async def search_tracks_by_lyrics(query: str, limit: int = 15) -> list:
 
     if not final_tracks:
         for art, tit in candidates[:limit]:
+            censored_flag = is_track_censored(tit)
             params = {
                 'id': f"txt_{abs(hash(art + tit))}",
                 'title': tit,
@@ -348,7 +377,8 @@ async def search_tracks_by_lyrics(query: str, limit: int = 15) -> list:
                 'cover': '',
                 'artist_id': '',
                 'album_id': '',
-                'album_title': ''
+                'album_title': '',
+                'censored': '1' if censored_flag else '0'
             }
             final_tracks.append({
                 'id': f"am_txt_{abs(hash(art + tit))}",
@@ -360,6 +390,7 @@ async def search_tracks_by_lyrics(query: str, limit: int = 15) -> list:
                 'album_id': None,
                 'album_title': None,
                 'cover_url': None,
+                'is_censored': censored_flag,
                 'source': 'official'
             })
 
@@ -429,6 +460,11 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
                                     tid = str(item.get('trackId'))
                                     title = item.get('trackName', 'Без названия')
                                     artist = item.get('artistName', artist_display_name)
+                                    album_title = item.get('collectionName', '')
+                                    explicitness = str(item.get('trackExplicitness', ''))
+                                    
+                                    censored_flag = is_track_censored(title, explicitness=explicitness, album_name=album_title)
+                                    
                                     raw_art = item.get('artworkUrl100', '')
                                     cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
                                     dur_sec = int((item.get('trackTimeMillis') or 0) / 1000)
@@ -441,7 +477,8 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
                                         'cover': cover_hq or '',
                                         'artist_id': str(artist_id),
                                         'album_id': str(item.get('collectionId', '')),
-                                        'album_title': item.get('collectionName', '')
+                                        'album_title': album_title,
+                                        'censored': '1' if censored_flag else '0'
                                     }
                                     encoded_url = "am://" + urllib.parse.urlencode(params)
                                     
@@ -454,9 +491,10 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
                                         'duration': dur_sec,
                                         'artist_id': str(artist_id),
                                         'album_id': str(item.get('collectionId', '')) or None,
-                                        'album_title': item.get('collectionName') or None,
+                                        'album_title': album_title or None,
                                         'cover_url': cover_hq,
                                         'artist_display_name': artist_display_name,
+                                        'is_censored': censored_flag,
                                         'source': 'official'
                                     })
             except Exception as e:
@@ -500,6 +538,10 @@ async def get_am_album_tracks(album_id: str):
                             tid = str(item.get('trackId'))
                             title = item.get('trackName', 'Без названия')
                             artist = item.get('artistName', 'Артист')
+                            explicitness = str(item.get('trackExplicitness', ''))
+                            
+                            censored_flag = is_track_censored(title, explicitness=explicitness, album_name=album_title)
+                            
                             raw_art = item.get('artworkUrl100', '')
                             cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
                             dur_sec = int((item.get('trackTimeMillis') or 0) / 1000)
@@ -512,7 +554,8 @@ async def get_am_album_tracks(album_id: str):
                                 'cover': cover_hq or '',
                                 'artist_id': str(item.get('artistId', '')),
                                 'album_id': str(album_id),
-                                'album_title': album_title
+                                'album_title': album_title,
+                                'censored': '1' if censored_flag else '0'
                             }
                             encoded_url = "am://" + urllib.parse.urlencode(params)
 
@@ -526,6 +569,7 @@ async def get_am_album_tracks(album_id: str):
                                 'album_id': str(album_id),
                                 'album_title': album_title,
                                 'cover_url': cover_hq,
+                                'is_censored': censored_flag,
                                 'source': 'official'
                             })
     except Exception as e:
@@ -563,6 +607,8 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
 
         raw_title = entry.get('title', 'Без названия')
         raw_uploader = entry.get('uploader') or 'Неизвестный автор'
+        
+        censored_flag = is_track_censored(raw_title)
         parsed_artist, parsed_title = parse_sc_title_and_artist(raw_title, raw_uploader)
 
         results.append({
@@ -571,6 +617,7 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
             'uploader': parsed_artist,
             'url': url,
             'duration': entry.get('duration') or 0,
+            'is_censored': censored_flag,
             'source': 'soundcloud'
         })
 
@@ -592,6 +639,7 @@ async def download_official_track(url_data: str, output_dir: str = "/tmp") -> di
     artist_id = params.get('artist_id', [None])[0]
     album_id = params.get('album_id', [None])[0]
     album_title = params.get('album_title', [None])[0]
+    is_censored = params.get('censored', ['0'])[0] == '1'
 
     mp3_path = os.path.join(output_dir, f"am_{track_id}.mp3")
     cover_raw_path = os.path.join(output_dir, f"am_{track_id}_raw.jpg")
@@ -673,7 +721,8 @@ async def download_official_track(url_data: str, output_dir: str = "/tmp") -> di
         'duration': duration,
         'artist_id': artist_id,
         'album_id': album_id,
-        'album_title': album_title
+        'album_title': album_title,
+        'is_censored': is_censored
     }
 
 async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
@@ -714,6 +763,7 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
 
     raw_title = raw_info.get('title', 'Track')
     raw_uploader = raw_info.get('uploader') or raw_info.get('channel', 'Artist')
+    is_censored = is_track_censored(raw_title)
     final_artist, final_title = parse_sc_title_and_artist(raw_title, raw_uploader)
     cover_url = raw_info.get('thumbnail')
 
@@ -795,7 +845,8 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'duration': int(raw_info.get('duration', 0)),
         'artist_id': None,
         'album_id': None,
-        'album_title': None
+        'album_title': None,
+        'is_censored': is_censored
     }
 
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
