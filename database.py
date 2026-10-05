@@ -5,10 +5,6 @@ import re
 DB_NAME = "database.db"
 
 def get_connection():
-    """
-    Создает подключение к базе данных с включенным режимом WAL для
-    параллельного чтения/записи и предотвращения блокировок.
-    """
     conn = sqlite3.connect(DB_NAME, timeout=20.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
@@ -54,7 +50,6 @@ def init_db():
             )
         ''')
 
-        # Таблица пожизненного кэша цензуры для мгновенной отдачи ножниц ✂️ в поиске
         c.execute('''
             CREATE TABLE IF NOT EXISTS censorship_cache (
                 track_signature TEXT PRIMARY KEY,
@@ -67,6 +62,12 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_downloads_file_id ON downloads(telegram_file_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_favorites_user_track ON favorites(user_id, track_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_censor_signature ON censorship_cache(track_signature)")
+
+        # Сброс старых ошибочных нулей, чтобы треки вроде Lost Angeles проверились заново
+        try:
+            c.execute("DELETE FROM censorship_cache WHERE is_censored = 0")
+        except Exception:
+            pass
 
         try:
             c.execute("ALTER TABLE downloads ADD COLUMN telegram_file_id TEXT")
@@ -81,9 +82,6 @@ def init_db():
         conn.commit()
 
 def get_cached_censorship(signature: str):
-    """
-    Возвращает статус цензуры трека из SQLite (True/False) или None, если трек еще не проверялся.
-    """
     if not signature:
         return None
     with get_connection() as conn:
@@ -93,9 +91,6 @@ def get_cached_censorship(signature: str):
     return bool(row[0]) if row is not None else None
 
 def set_cached_censorship(signature: str, is_censored: bool):
-    """
-    Сохраняет статус цензуры трека навсегда в базу.
-    """
     if not signature:
         return
     with get_connection() as conn:
