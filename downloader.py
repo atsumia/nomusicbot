@@ -16,11 +16,94 @@ load_dotenv()
 shazam = Shazam()
 ym_client = None
 
-# Расширенные маркеры цензурированных версий (русский и английский)
 CENSORSHIP_PATTERN = re.compile(
     r'(?:[\(\[\{]|\b)(clean(?:\s*version)?|censored|radio\s*edit|radio\s*version|цензур(?:а|ная|ный|ом|кой|ка)?|без\s*мата|запикано|cut\s*version)(?:[\)\]\}]|\b)',
     re.IGNORECASE
 )
+
+# Расширенная база псевдонимов
+ARTIST_ALIASES = {
+    'макан': 'MACAN',
+    'macan': 'MACAN',
+    'оксимирон': 'Oxxxymiron',
+    'окси': 'Oxxxymiron',
+    'oxxxymiron': 'Oxxxymiron',
+    'мияги': 'Miyagi',
+    'miyagi': 'Miyagi',
+    'эндшпиль': 'Andy Panda',
+    'скриптонит': 'Скриптонит',
+    'scriptonite': 'Скриптонит',
+    'фараон': 'PHARAOH',
+    'pharaoh': 'PHARAOH',
+    'тейп': 'Big Baby Tape',
+    'биг бейби тейп': 'Big Baby Tape',
+    'биг бейби тейп аарне': 'Big Baby Tape & Aarne',
+    'тейп аарне': 'Big Baby Tape & Aarne',
+    'аарне': 'Aarne',
+    'aarne': 'Aarne',
+    'кизару': 'kizaru',
+    'kizaru': 'kizaru',
+    'моргенштерн': 'MORGENSHTERN',
+    'morgenshtern': 'MORGENSHTERN',
+    'френдли таг': 'FRIENDLY THUG 52 NGG',
+    'френдлитаг': 'FRIENDLY THUG 52 NGG',
+    'таг': 'FRIENDLY THUG 52 NGG',
+    'лсп': 'ЛСП',
+    'lsp': 'ЛСП',
+    'кино': 'Кино',
+    'баста': 'Баста',
+    'гуф': 'GUF',
+    'инстасамка': 'INSTASAMKA',
+    'каста': 'Каста',
+    'король и шут': 'Король и Шут',
+    'киш': 'Король и Шут',
+    'капсайз': 'CUPSIZE',
+    'cupsize': 'CUPSIZE',
+    'плм': 'ПОЛМАТЕРИ',
+    'полматери': 'ПОЛМАТЕРИ',
+    'серега пират': 'Серёга Пират',
+    'серёга пират': 'Серёга Пират',
+    'буда': 'OG Buda',
+    'ог буда': 'OG Buda',
+    'og buda': 'OG Buda',
+    'токсис': 'Toxi$',
+    'toxi$': 'Toxi$',
+    'toxis': 'Toxi$',
+    'бушидо жо': 'BUSHIDO ZHO',
+    'bushido zho': 'BUSHIDO ZHO',
+    'скалли милано': 'Scally Milano',
+    'scally milano': 'Scally Milano',
+    'майот': 'MAYOT',
+    'mayot': 'MAYOT',
+    'сода лав': 'SODA LUV',
+    'soda luv': 'SODA LUV',
+    'платина': 'Платина',
+    'platina': 'Платина',
+    'херонвотер': 'Heronwater',
+    'heronwater': 'Heronwater',
+    'салюки': 'SALUKI',
+    'saluki': 'SALUKI',
+    'маркул': 'MARKUL',
+    'markul': 'MARKUL',
+    'обладает': 'OBLADAET',
+    'obladaet': 'OBLADAET'
+}
+
+# Реестр известных отечественных/СНГ артистов (включая англоязычные псевдонимы)
+CIS_ARTISTS_CATALOG = {
+    'kizaru', 'macan', 'big baby tape', 'aarne', 'og buda', 'oxxxymiron', 'miyagi',
+    'andy panda', 'скриптонит', 'pharaoh', 'friendly thug 52 ngg', 'friendly thug',
+    'alblak 52', 'toxi$', 'toxis', 'bushido zho', 'scally milano', 'uglystephan',
+    'mayot', 'soda luv', 'платина', 'heronwater', 'saluki', 'markul', 'obladaet',
+    'cupsize', 'полматери', 'серёга пират', 'серега пират', 'кино', 'баста',
+    'guf', 'инстасамка', 'каста', 'король и шут', 'лсп', 'моргенштерн', 'boulevard depo',
+    'lizer', 'yanix', 'noize mc', 'anacondaz', 'три дня дождя', 'дора', 'dora',
+    'рокет', 'rocket', 'eldzhey', 'элджей', 'feduk', 'федук', 'ганвест', 'нурминский',
+    'тима белорусских', 'пошлая молли', 'нервы', 'валентин стрыкало', 'face', 'slava marlow',
+    'хаски', 'замай', 'локимин', 'loqiemean', 'джарахов', 'джа kalib', 'jah khalib',
+    'jony', 'hammali & navai', 'navai', 'hammali', 'rauf & faik', 'mot', 'мот', 'айсгергерт',
+    'icegergert', 'voskresenskii', 'воскресенский'
+}
 
 def normalize_text_ru(text: str) -> str:
     if not text:
@@ -28,6 +111,28 @@ def normalize_text_ru(text: str) -> str:
     cleaned = text.lower().replace('ё', 'е')
     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
     return re.sub(r'\s+', ' ', cleaned).strip()
+
+def is_cis_entity(artist: str, title: str = "", album: str = "") -> bool:
+    """
+    Определяет принадлежность трека к СНГ/русскоязычному музыкальному пространству:
+    1. Наличие кириллических символов в артисте, треке или альбоме.
+    2. Совпадение исполнителя со списком известных отечественных рэперов/музыкантов с латинскими именами.
+    """
+    norm_artist = normalize_text_ru(artist)
+    
+    # Проверка по реестру артистов
+    if norm_artist in CIS_ARTISTS_CATALOG or any(norm_artist.startswith(a) for a in CIS_ARTISTS_CATALOG):
+        return True
+    for a in CIS_ARTISTS_CATALOG:
+        if a in norm_artist:
+            return True
+
+    # Проверка на кириллицу в метаданных
+    combined = f"{artist} {title} {album}"
+    if re.search(r'[а-яА-ЯёЁ]', combined):
+        return True
+
+    return False
 
 def is_track_censored(track_name: str, explicitness: str = "", album_name: str = "", collection_explicitness: str = "") -> bool:
     expl = str(explicitness).lower().strip()
@@ -72,48 +177,6 @@ async def get_ym_client():
         ym_client = None
 
     return ym_client
-
-ARTIST_ALIASES = {
-    'макан': 'MACAN',
-    'macan': 'MACAN',
-    'оксимирон': 'Oxxxymiron',
-    'окси': 'Oxxxymiron',
-    'oxxxymiron': 'Oxxxymiron',
-    'мияги': 'Miyagi',
-    'miyagi': 'Miyagi',
-    'эндшпиль': 'Andy Panda',
-    'скриптонит': 'Скриптонит',
-    'scriptonite': 'Скриптонит',
-    'фараон': 'PHARAOH',
-    'pharaoh': 'PHARAOH',
-    'тейп': 'Big Baby Tape',
-    'биг бейби тейп': 'Big Baby Tape',
-    'кизару': 'kizaru',
-    'kizaru': 'kizaru',
-    'моргенштерн': 'MORGENSHTERN',
-    'morgenshtern': 'MORGENSHTERN',
-    'френдли таг': 'FRIENDLY THUG 52 NGG',
-    'френдлитаг': 'FRIENDLY THUG 52 NGG',
-    'таг': 'FRIENDLY THUG 52 NGG',
-    'лсп': 'ЛСП',
-    'lsp': 'ЛСП',
-    'кино': 'Кино',
-    'баста': 'Баста',
-    'гуф': 'GUF',
-    'инстасамка': 'INSTASAMKA',
-    'каста': 'Каста',
-    'король и шут': 'Король и Шут',
-    'киш': 'Король и Шут',
-    'капсайз': 'CUPSIZE',
-    'cupsize': 'CUPSIZE',
-    'плм': 'ПОЛМАТЕРИ',
-    'полматери': 'ПОЛМАТЕРИ',
-    'серега пират': 'Серёга Пират',
-    'серёга пират': 'Серёга Пират',
-    'буда': 'OG Buda',
-    'ог буда': 'OG Buda',
-    'og buda': 'OG Buda'
-}
 
 def normalize_search_query(query: str) -> str:
     if not query:
@@ -211,76 +274,90 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
 
 def score_and_sort_tracks(tracks: list, query: str) -> list:
     """
-    Интеллектуальное ранжирование с защитой от коллизий артистов и названий:
-    - Защищает запросы по артистам: если запрос совпадает с исполнителем,
-      его официальные треки получают наивысший приоритет.
-    - Защищает запросы по названиям: если запрос совпадает с песней,
-      она выходит на 1 место, не уступая неизвестным артистам-однофамильцам.
-    - Максимальный приоритет для связки «Артист + Название».
-    - Бонус оригинальным (Explicit / Non-censored) версиям.
+    Интеллектуальное ранжирование с региональной персонализацией (RU/CIS):
+    1. Точное совпадение песни (t_title == query) получает абсолютный приоритет (+350),
+       если запрос не является подтвержденным псевдонимом артиста из реестра.
+    2. Зарубежные исполнители-однофамильцы (например, неизвестный рэпер Baby drac)
+       больше не перебивают треки отечественных артистов (+70 vs +350).
+    3. Региональный бонус (+180 очков) для треков русскоязычного сегмента и СНГ-артистов.
+    4. Точное совпадение связки «Артист + Название» (+400 очков).
     """
     norm_q = normalize_text_ru(query)
     q_words = set(norm_q.split())
 
-    # Проверяем, является ли запрос именем артиста из нашей базы алиасов
-    is_artist_alias_query = False
-    for k, v in ARTIST_ALIASES.items():
-        if norm_q in (normalize_text_ru(k), normalize_text_ru(v)):
-            is_artist_alias_query = True
+    # Проверяем, является ли запрос именем артиста из нашей базы
+    is_established_artist_query = False
+    for a in CIS_ARTISTS_CATALOG:
+        if norm_q == normalize_text_ru(a):
+            is_established_artist_query = True
             break
+    if not is_established_artist_query:
+        for k, v in ARTIST_ALIASES.items():
+            if norm_q in (normalize_text_ru(k), normalize_text_ru(v)):
+                is_established_artist_query = True
+                break
 
     def get_score(t):
         score = 0
         t_title = normalize_text_ru(t.get('title', ''))
         t_artist = normalize_text_ru(t.get('uploader', ''))
+        t_album = normalize_text_ru(t.get('album_title', ''))
         combined = f"{t_artist} {t_title}"
         combined_rev = f"{t_title} {t_artist}"
 
-        # 1. Точное совпадение связки Артист + Название (абсолютный приоритет)
+        # 1. Связка Артист + Название
         if combined == norm_q or combined_rev == norm_q:
-            score += 350
+            score += 400
         elif norm_q in combined:
-            score += 80
+            score += 100
 
-        # 2. Обработка совпадений по исполнителю (защита запросов вроде "kizaru", "macan")
-        if t_artist == norm_q:
-            score += 250
-        elif t_artist.startswith(norm_q):
-            score += 130
-        elif norm_q in t_artist:
-            score += 70
-
-        # 3. Обработка совпадений по названию трека (защита запросов вроде "baby drac", "порш")
+        # 2. Обработка названия трека vs имя артиста
         if t_title == norm_q:
-            # Если запрос был именем известного артиста (например, "kizaru"),
-            # чужой трек с названием "kizaru" не должен перебивать хиты самого Kizaru
-            if is_artist_alias_query and t_artist != norm_q:
+            if is_established_artist_query and t_artist != norm_q:
                 score += 80
             else:
-                score += 220
+                # Название трека совпало точно с запросом: наивысший приоритет
+                score += 350
         elif t_title.startswith(norm_q):
-            score += 100
+            score += 120
         elif norm_q in t_title:
-            score += 50
+            score += 60
 
-        # 4. Совпадение отдельных слов
+        # 3. Обработка совпадения по артисту
+        if t_artist == norm_q:
+            if is_established_artist_query:
+                # Если искали подтвержденного артиста (например, kizaru, macan)
+                score += 320
+            else:
+                # Неизвестный зарубежный артист с таким именем не должен побеждать песню
+                score += 70
+        elif t_artist.startswith(norm_q):
+            score += 60 if not is_established_artist_query else 140
+        elif norm_q in t_artist:
+            score += 30
+
+        # 4. РЕГИОНАЛЬНЫЙ БОНУС (Персонализация под русскоязычный сегмент / СНГ)
+        if is_cis_entity(t.get('uploader', ''), t.get('title', ''), t_album):
+            score += 180
+
+        # 5. Совпадение отдельных слов
         title_words = set(t_title.split())
         artist_words = set(t_artist.split())
         for qw in q_words:
-            if qw in artist_words:
-                score += 35
-            elif any(aw.startswith(qw) for aw in artist_words):
-                score += 15
             if qw in title_words:
-                score += 30
+                score += 35
             elif any(tw.startswith(qw) for tw in title_words):
                 score += 15
+            if qw in artist_words:
+                score += 30
+            elif any(aw.startswith(qw) for aw in artist_words):
+                score += 15
 
-        # 5. Бонус за оригиналы (не цензура)
+        # 6. Бонус за оригинал (не цензура)
         if not t.get('is_censored', False):
-            score += 15
+            score += 20
 
-        # 6. Приоритет источника Apple Music (songTerm / general)
+        # 7. Приоритет источника
         score += t.get('source_priority', 0)
 
         return score
@@ -296,8 +373,10 @@ async def search_apple_catalog(query: str, limit: int = 15):
         'Accept': 'application/json'
     }
 
-    url_general = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&explicit=Yes&limit=50"
-    url_song_only = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&attribute=songTerm&explicit=Yes&limit=50"
+    # Опрашиваем витрины RU и KZ (Казахстан содержит полный каталог СНГ-релизов без изъятия прав)
+    url_song_kz = f"https://itunes.apple.com/search?term={term}&country=kz&entity=song&attribute=songTerm&explicit=Yes&limit=50"
+    url_gen_kz = f"https://itunes.apple.com/search?term={term}&country=kz&entity=song&explicit=Yes&limit=50"
+    url_gen_ru = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&explicit=Yes&limit=50"
 
     results = []
 
@@ -361,20 +440,76 @@ async def search_apple_catalog(query: str, limit: int = 15):
             print(f"❌ [APPLE SEARCH SUBQUERY ERROR]: {e}")
         return []
 
+    # Дополнительный опрос Яндекс Музыки (если авторизован токен)
+    async def fetch_ym_results():
+        try:
+            client = await get_ym_client()
+            if not client:
+                return []
+            sr = await client.search(text=normalized, type_='track', page=0)
+            if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+                ym_items = []
+                for t in sr.tracks.results[:15]:
+                    tid = str(t.id)
+                    title = t.title or "Без названия"
+                    artists = ", ".join([a.name for a in t.artists]) if t.artists else "Артист"
+                    album_name = t.albums[0].title if t.albums else ""
+                    album_id = str(t.albums[0].id) if t.albums else ""
+                    dur_sec = int((t.duration_ms or 0) / 1000)
+                    
+                    cover_uri = t.cover_uri or (t.albums[0].cover_uri if t.albums else "")
+                    cover_hq = f"https://{cover_uri.replace('%%', '600x600')}" if cover_uri else None
+                    
+                    censored_flag = is_track_censored(title, album_name=album_name)
+                    
+                    params = {
+                        'id': tid,
+                        'title': title,
+                        'artist': artists,
+                        'duration': str(dur_sec),
+                        'cover': cover_hq or '',
+                        'artist_id': str(t.artists[0].id) if t.artists else '',
+                        'album_id': album_id,
+                        'album_title': album_name,
+                        'censored': '1' if censored_flag else '0'
+                    }
+                    encoded_url = "am://" + urllib.parse.urlencode(params)
+                    
+                    ym_items.append({
+                        'id': f"am_ym_{tid}",
+                        'raw_id': tid,
+                        'title': title,
+                        'uploader': artists,
+                        'url': encoded_url,
+                        'duration': dur_sec,
+                        'artist_id': str(t.artists[0].id) if t.artists else None,
+                        'album_id': album_id or None,
+                        'album_title': album_name or None,
+                        'cover_url': cover_hq,
+                        'is_censored': censored_flag,
+                        'source': 'official',
+                        'source_priority': 40
+                    })
+                return ym_items
+        except Exception as e:
+            print(f"❌ [YM SEARCH SUBQUERY ERROR]: {e}")
+        return []
+
     try:
         timeout = aiohttp.ClientTimeout(total=4.5)
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            res_song, res_gen = await asyncio.gather(
-                fetch_endpoint(session, url_song_only, priority=30),
-                fetch_endpoint(session, url_general, priority=0),
+            res_song_kz, res_gen_kz, res_gen_ru, ym_res = await asyncio.gather(
+                fetch_endpoint(session, url_song_kz, priority=40),
+                fetch_endpoint(session, url_gen_kz, priority=20),
+                fetch_endpoint(session, url_gen_ru, priority=10),
+                fetch_ym_results(),
                 return_exceptions=True
             )
-            if isinstance(res_song, list):
-                results.extend(res_song)
-            if isinstance(res_gen, list):
-                results.extend(res_gen)
+            for r in (res_song_kz, res_gen_kz, res_gen_ru, ym_res):
+                if isinstance(r, list):
+                    results.extend(r)
     except Exception as e:
-        print(f"❌ [APPLE MUSIC SEARCH ERROR]: {e}")
+        print(f"❌ [OFFICIAL SEARCH AGGREGATOR ERROR]: {e}")
 
     unique = deduplicate_tracks(results)
     ranked = score_and_sort_tracks(unique, query)
@@ -453,34 +588,6 @@ async def search_tracks_by_lyrics(query: str, limit: int = 15) -> list:
                 seen_tracks.add(track_key)
                 final_tracks.append(trk)
 
-    if not final_tracks:
-        for art, tit in candidates[:limit]:
-            censored_flag = is_track_censored(tit)
-            params = {
-                'id': f"txt_{abs(hash(art + tit))}",
-                'title': tit,
-                'artist': art,
-                'duration': "180",
-                'cover': '',
-                'artist_id': '',
-                'album_id': '',
-                'album_title': '',
-                'censored': '1' if censored_flag else '0'
-            }
-            final_tracks.append({
-                'id': f"am_txt_{abs(hash(art + tit))}",
-                'title': tit,
-                'uploader': art,
-                'url': "am://" + urllib.parse.urlencode(params),
-                'duration': 180,
-                'artist_id': None,
-                'album_id': None,
-                'album_title': None,
-                'cover_url': None,
-                'is_censored': censored_flag,
-                'source': 'official'
-            })
-
     return deduplicate_tracks(final_tracks)[:limit]
 
 async def search_artist_discography(artist_query: str, mode: str = "official", limit: int = 50):
@@ -501,7 +608,7 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
             artist_id = clean_query
         else:
             term = urllib.parse.quote(target_name)
-            artist_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=musicArtist&limit=3"
+            artist_search_url = f"https://itunes.apple.com/search?term={term}&country=kz&entity=musicArtist&limit=3"
 
             try:
                 timeout = aiohttp.ClientTimeout(total=4.0)
@@ -517,7 +624,7 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
 
             if not artist_id:
                 try:
-                    song_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&explicit=Yes&limit=5"
+                    song_search_url = f"https://itunes.apple.com/search?term={term}&country=kz&entity=song&explicit=Yes&limit=5"
                     timeout = aiohttp.ClientTimeout(total=4.0)
                     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                         async with session.get(song_search_url) as resp:
@@ -533,7 +640,7 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
 
         tracks = []
         if artist_id:
-            lookup_url = f"https://itunes.apple.com/lookup?id={artist_id}&entity=song&explicit=Yes&limit={limit}&country=ru"
+            lookup_url = f"https://itunes.apple.com/lookup?id={artist_id}&entity=song&explicit=Yes&limit={limit}&country=kz"
             try:
                 timeout = aiohttp.ClientTimeout(total=5.0)
                 async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
@@ -614,7 +721,7 @@ async def get_am_album_tracks(album_id: str):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json'
     }
-    url = f"https://itunes.apple.com/lookup?id={album_id}&entity=song&explicit=Yes&country=ru"
+    url = f"https://itunes.apple.com/lookup?id={album_id}&entity=song&explicit=Yes&country=kz"
     tracks = []
     try:
         timeout = aiohttp.ClientTimeout(total=5.0)
