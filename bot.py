@@ -1,6 +1,10 @@
 import os
 import json
 import asyncio
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -17,10 +21,8 @@ from aiogram.types import (
     InlineQuery,
     InlineQueryResultCachedAudio,
     InlineQueryResultArticle,
-    InputTextMessageContent,
-    WebAppInfo
+    InputTextMessageContent
 )
-from dotenv import load_dotenv
 
 import database
 from downloader import (
@@ -32,11 +34,7 @@ from downloader import (
     get_ym_client
 )
 
-load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-# АДРЕС ВАШЕГО MINI APP (GitHub Pages)
-WEBAPP_URL = "https://atsumia.github.io/nomusicbot/"
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан!")
@@ -74,10 +72,9 @@ def get_bottom_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     mode_label = "Режим: Официальные" if user['search_mode'] == 'official' else "Режим: SoundCloud"
     
     keyboard = [
-        [KeyboardButton(text="🎵 Открыть плеер", web_app=WebAppInfo(url=WEBAPP_URL)), 
-         KeyboardButton(text="🔎 Поиск")],
-        [KeyboardButton(text="🎙 Поиск артиста"), KeyboardButton(text="📝 Поиск по тексту")],
-        [KeyboardButton(text="👤 Мой кабинет"), KeyboardButton(text=f"🎧 {mode_label}")]
+        [KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="🎙 Поиск артиста")],
+        [KeyboardButton(text="📝 Поиск по тексту"), KeyboardButton(text=f"🎧 {mode_label}")],
+        [KeyboardButton(text="👤 Мой кабинет")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -86,7 +83,6 @@ def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
     
     keyboard = [
-        [InlineKeyboardButton(text="✨ Открыть NoMusic Player", web_app=WebAppInfo(url=WEBAPP_URL))],
         [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
          InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
         [InlineKeyboardButton(text="📝 Поиск по тексту песни", callback_data="menu:lyrics_search")],
@@ -115,46 +111,6 @@ def get_admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
     ])
 
-# ================= ХЭНДЛЕР MINI APP (СКАЧИВАНИЕ ИЗ ПЛЕЕРА) =================
-@dp.message(F.web_app_data)
-async def web_app_download_handler(message: types.Message):
-    """
-    Принимает клик на кнопку 'Скачать в чат' из WebApp плеера
-    """
-    try:
-        data = json.loads(message.web_app_data.data)
-        action = data.get("action")
-        
-        if action == "download_track":
-            query = data.get("query", "").strip()
-            if not query:
-                return
-            
-            user = database.get_user(message.from_user.id)
-            mode = user.get('search_mode', 'official')
-            status_msg = await message.answer(f"⚡ <i>Загружаю из плеера:</i> <b>{query}</b>...", parse_mode="HTML")
-            
-            # Делаем быстрый поиск по запросу, чтобы получить прямую ссылку
-            results = await search_tracks(query, mode=mode, limit=1)
-            if not results:
-                await status_msg.edit_text("Не удалось найти аудиопоток для скачивания 🥲")
-                return
-            
-            track = results[0]
-            await process_and_send_audio(
-                message.chat.id, 
-                message.from_user.id, 
-                track['id'], 
-                track['url'], 
-                status_msg,
-                artist_id=track.get('artist_id'),
-                album_id=track.get('album_id'),
-                is_censored=track.get('is_censored', False)
-            )
-    except Exception as e:
-        await message.answer(f"⚠️ Ошибка обработки запроса из плеера: {e}")
-# ===========================================================================
-
 @dp.message(Command("admin"))
 async def admin_command_handler(message: types.Message):
     if not is_admin(message.from_user.id):
@@ -165,7 +121,7 @@ async def admin_command_handler(message: types.Message):
 async def admin_menu_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
-    await callback.message.edit_text("⚡ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
+    await callback.message.edit_text("⚡️ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
     await callback.answer()
 
 @dp.callback_query(F.data == "admin:stats")
@@ -258,7 +214,7 @@ async def admin_diag_callback(callback: CallbackQuery):
         f"🔑 Токен официального стрима: <b>{token_badge}</b>\n"
         f"🎵 Статус аудио-клиента: <b>{ym_status}</b>\n"
         f"🌍 Apple Music Каталог: <b>🟢 Storefront (RU) активен</b>\n"
-        f"⚡️ Инлайн кэширование: <b>🟢 Работает по file_id</b>\n"
+        f"⚡ Инлайн кэширование: <b>🟢 Работает по file_id</b>\n"
         f"👑 ID администраторов: <code>{', '.join(map(str, ADMIN_IDS)) or 'Не заданы'}</code>"
     )
 
@@ -545,7 +501,7 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         is_long = duration > LONG_TRACK_THRESHOLD
         
         is_censored = item.get('is_censored', False)
-        # Компактный значок цензуры
+        # Компактный значок цензуры без лишнего текста
         censor_badge = " ✂️" if is_censored else ""
         warn_badge = f" ⏳ {dur_str}" if is_long and dur_str else ""
         badges = f"{censor_badge}{warn_badge}"
@@ -563,7 +519,7 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"page:{page - 1}"))
     nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
-        nav_row.append(InlineKeyboardButton(text="➡️️", callback_data=f"page:{page + 1}"))
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page:{page + 1}"))
     if nav_row:
         buttons.append(nav_row)
 
@@ -608,7 +564,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         }
 
         kb = build_search_keyboard(user_id, page=0)
-        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
+        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️️ Ремиксы (SoundCloud)"
         await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
@@ -1063,45 +1019,6 @@ async def inline_search_handler(inline_query: InlineQuery):
         print(f"❌ [INLINE LOCAL DB ERROR]: {e}")
         await inline_query.answer([], cache_time=2, is_personal=True)
 
-# ================= REST API ДЛЯ MINI APP =================
-async def api_search_handler(request: web.Request):
-    """
-    REST API для Telegram Mini App плеера
-    """
-    query = request.query.get("q", "").strip()
-    mode = request.query.get("mode", "official")
-    
-    headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Content-Type": "application/json"
-    }
-
-    if request.method == "OPTIONS":
-        return web.Response(headers=headers)
-
-    if not query:
-        return web.json_response({"results": []}, headers=headers)
-
-    try:
-        results = await search_tracks(query, mode=mode, limit=15)
-        formatted = []
-        for t in results:
-            formatted.append({
-                "id": str(t.get("id")),
-                "title": t.get("title"),
-                "artist": t.get("uploader") or t.get("artist") or "Исполнитель",
-                "cover": t.get("thumb_path") or t.get("cover") or "",
-                "duration": t.get("duration", 0),
-                "url": t.get("url"),
-                "is_censored": t.get("is_censored", False)
-            })
-        return web.json_response({"results": formatted}, headers=headers)
-    except Exception as e:
-        return web.json_response({"error": str(e), "results": []}, headers=headers)
-# =========================================================
-
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
 
@@ -1109,10 +1026,6 @@ async def start_dummy_web_server():
     app = web.Application()
     app.router.add_get('/', handle_health_check)
     app.router.add_get('/health', handle_health_check)
-    
-    # Регистрация роутов для Mini App
-    app.router.add_get('/api/search', api_search_handler)
-    app.router.add_options('/api/search', api_search_handler)
     
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
