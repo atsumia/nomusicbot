@@ -159,7 +159,7 @@ async def get_ym_client():
     yandex_proxy = os.getenv("YANDEX_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
 
     if not yandex_token:
-        print("⚠️️ [YM]: Токен Яндекс Музыки (YANDEX_MUSIC_TOKEN) не обнаружен в окружении.")
+        print("⚠ [YM]: Токен Яндекс Музыки (YANDEX_MUSIC_TOKEN) не обнаружен в окружении.")
 
     try:
         kwargs = {}
@@ -180,36 +180,61 @@ async def get_ym_client():
 
     return ym_client
 
-async def check_ym_track_censorship(client: ClientAsync, target_track) -> bool:
+async def fetch_lrclib_track_censorship(artist: str, title: str) -> bool:
     """
-    Легковесный фоновый анализ официального текста трека из Яндекс Музыки.
+    Быстрый резервный опрос LRCLIB на наличие купюр (***) в тексте.
+    """
+    try:
+        url = f"https://lrclib.net/api/get?artist_name={urllib.parse.quote(artist)}&track_name={urllib.parse.quote(title)}"
+        headers = {'User-Agent': 'NoMusicBot/1.0'}
+        timeout = aiohttp.ClientTimeout(total=0.7)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    full_text = data.get('plainLyrics') or data.get('syncedLyrics') or ""
+                    if full_text and CENSORED_LYRICS_PATTERN.search(full_text):
+                        return True
+    except Exception:
+        pass
+    return False
+
+async def check_ym_track_censorship(client: ClientAsync, target_track) -> tuple[bool, bool]:
+    """
+    Корректный анализ официального текста Яндекс Музыки через fetch_lyrics_async.
+    Возвращает (has_cuts: bool, text_found: bool).
     """
     if not client or not target_track:
-        return False
+        return False, False
 
     try:
-        lyrics_text = None
+        lyrics_obj = None
         if hasattr(target_track, 'get_lyrics_async'):
-            lyrics_obj = await asyncio.wait_for(target_track.get_lyrics_async(format_='TEXT'), timeout=1.2)
-            if lyrics_obj:
-                lyrics_text = getattr(lyrics_obj, 'full_lyrics', None) or getattr(lyrics_obj, 'text', None) or str(lyrics_obj)
+            lyrics_obj = await asyncio.wait_for(target_track.get_lyrics_async(format_='TEXT'), timeout=1.0)
+        elif hasattr(client, 'tracks_lyrics'):
+            lyrics_obj = await asyncio.wait_for(client.tracks_lyrics(target_track.id, format_='TEXT'), timeout=1.0)
 
-        if not lyrics_text and hasattr(client, 'tracks_lyrics'):
-            lyrics_resp = await asyncio.wait_for(client.tracks_lyrics(target_track.id, format='TEXT'), timeout=1.2)
-            if lyrics_resp:
-                lyrics_text = getattr(lyrics_resp, 'full_lyrics', None) or getattr(lyrics_resp, 'text', None) or str(lyrics_resp)
+        if lyrics_obj:
+            lyrics_text = None
+            if hasattr(lyrics_obj, 'fetch_lyrics_async'):
+                lyrics_text = await asyncio.wait_for(lyrics_obj.fetch_lyrics_async(), timeout=1.2)
+            elif hasattr(lyrics_obj, 'full_lyrics') and lyrics_obj.full_lyrics:
+                lyrics_text = lyrics_obj.full_lyrics
+            elif hasattr(lyrics_obj, 'text') and lyrics_obj.text:
+                lyrics_text = lyrics_obj.text
 
-        if lyrics_text and CENSORED_LYRICS_PATTERN.search(lyrics_text):
-            return True
+            if lyrics_text and isinstance(lyrics_text, str) and len(lyrics_text) > 10:
+                has_cuts = bool(CENSORED_LYRICS_PATTERN.search(lyrics_text))
+                return has_cuts, True
     except Exception:
         pass
 
-    return False
+    return False, False
 
 async def fast_resolve_track_censorship(track_dict: dict) -> bool:
     """
     Мгновенно проверяет статус цензуры по SQLite кэшу для официальных треков.
-    Если трека в кэше нет — делает точечный сетевой запрос к текстам Яндекса с таймаутом 0.8с.
+    Если трека в кэше нет — делает точечный сетевой запрос к текстам Яндекса / LRCLIB.
     """
     title = track_dict.get('title', '')
     artist = track_dict.get('uploader', '')
@@ -218,41 +243,48 @@ async def fast_resolve_track_censorship(track_dict: dict) -> bool:
 
     sig = f"{normalize_text_ru(artist)} - {normalize_text_ru(title)}"
     cached = database.get_cached_censorship(sig)
-    if cached is not None:
-        return cached
+    # Если в кэше уже есть подтвержденная цензура — отдаем мгновенно
+    if cached is True:
+        return True
 
-    # Если уже по метаданным Apple определена цензура, сохраняем в кэш
+    # Если уже по метаданным Apple определена цензура
     if track_dict.get('is_censored', False):
         database.set_cached_censorship(sig, True)
         return True
 
-    # Быстрый опрос Яндекса с лимитом 0.8 секунды
     try:
         client = await get_ym_client()
-        if not client:
-            return False
-
-        track_id = track_dict.get('raw_id')
-        is_ym_direct = str(track_dict.get('id', '')).startswith('am_ym_')
         target_ym_track = None
 
-        if is_ym_direct and track_id and track_id.isdigit():
-            tracks_info = await asyncio.wait_for(client.tracks([int(track_id)]), timeout=0.8)
-            if tracks_info:
-                target_ym_track = tracks_info[0]
-        else:
-            sr = await asyncio.wait_for(client.search(text=f"{artist} - {title}", type_='track', page=0), timeout=0.8)
-            if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
-                target_ym_track = sr.tracks.results[0]
+        if client:
+            track_id = track_dict.get('raw_id')
+            is_ym_direct = str(track_dict.get('id', '')).startswith('am_ym_')
 
-        if target_ym_track:
-            has_cuts = await asyncio.wait_for(check_ym_track_censorship(client, target_ym_track), timeout=0.8)
+            if is_ym_direct and track_id and track_id.isdigit():
+                tracks_info = await asyncio.wait_for(client.tracks([int(track_id)]), timeout=0.8)
+                if tracks_info:
+                    target_ym_track = tracks_info[0]
+            else:
+                sr = await asyncio.wait_for(client.search(text=f"{artist} - {title}", type_='track', page=0), timeout=0.8)
+                if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+                    target_ym_track = sr.tracks.results[0]
+
+        if target_ym_track and client:
+            has_cuts, text_found = await asyncio.wait_for(check_ym_track_censorship(client, target_ym_track), timeout=1.4)
             if has_cuts:
                 database.set_cached_censorship(sig, True)
                 return True
-            else:
+            elif text_found:
+                # Кэшируем False только если текст действительно был получен и проверен
                 database.set_cached_censorship(sig, False)
                 return False
+
+        # Резервная быстрая проверка через LRCLIB (0.7 сек)
+        lrclib_cut = await fetch_lrclib_track_censorship(artist, title)
+        if lrclib_cut:
+            database.set_cached_censorship(sig, True)
+            return True
+
     except Exception:
         pass
 
@@ -589,7 +621,7 @@ async def search_apple_catalog(query: str, limit: int = 15):
     unique = deduplicate_tracks(results)
     ranked = score_and_sort_tracks(unique, query)[:limit]
 
-    # ПАРАЛЛЕЛЬНАЯ LIVE-ДЕТЕКЦИЯ ЦЕНЗУРЫ ТОП-5 ТРЕКОВ (ТОЛЬКО ОФИЦИАЛЬНЫЕ РЕЛИЗЫ)
+    # ПАРАЛЛЕЛЬНАЯ LIVE-ДЕТЕКЦИЯ ЦЕНЗУРЫ ТОП-5 ТРЕКОВ
     top_candidates = ranked[:5]
     if top_candidates:
         censor_tasks = [fast_resolve_track_censorship(t) for t in top_candidates]
@@ -608,7 +640,7 @@ async def search_tracks_by_lyrics(query: str, limit: int = 15) -> list:
     async def fetch_lrclib():
         try:
             url = f"https://lrclib.net/api/search?q={urllib.parse.quote(query_clean)}"
-            headers = {'User-Agent': 'NoMusicBot/1.0 (Telegram Music Bot)'}
+            headers = {'User-Agent': 'NoMusicBot/1.0'}
             timeout = aiohttp.ClientTimeout(total=4.5)
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                 async with session.get(url) as resp:
@@ -998,7 +1030,6 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
         
         parsed_artist, parsed_title = parse_sc_title_and_artist(raw_title, raw_uploader)
 
-        # ДЛЯ SOUNDCLOUD ЦЕНЗУРА ВСЕГДА ВЫКЛЮЧЕНА (is_censored = False)
         results.append({
             'id': f"sc_{eid}",
             'title': parsed_title,
@@ -1055,19 +1086,28 @@ async def download_official_track(url_data: str, output_dir: str = "/tmp") -> di
             dl_task = target_ym_track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
             lyrics_task = check_ym_track_censorship(client, target_ym_track)
 
-            dl_res, has_lyrics_cuts = await asyncio.gather(dl_task, lyrics_task, return_exceptions=True)
+            dl_res, lyrics_result = await asyncio.gather(dl_task, lyrics_task, return_exceptions=True)
 
             if not isinstance(dl_res, Exception):
                 download_success = True
                 print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 для {artist} — {title}")
                 
                 sig = f"{normalize_text_ru(artist)} - {normalize_text_ru(title)}"
-                if isinstance(has_lyrics_cuts, bool) and has_lyrics_cuts:
+                has_lyrics_cuts = False
+                text_was_read = False
+                if isinstance(lyrics_result, tuple):
+                    has_lyrics_cuts, text_was_read = lyrics_result
+
+                # Если Яндекс не ответил текстом, пробуем быстрый LRCLIB
+                if not has_lyrics_cuts and not text_was_read:
+                    has_lyrics_cuts = await fetch_lrclib_track_censorship(artist, title)
+
+                if has_lyrics_cuts:
                     is_censored = True
                     database.set_cached_censorship(sig, True)
-                    print(f"✂️ [YM LYRICS DETECTED]: Обнаружены скрытые купюры (***) -> сохранён статус Clean")
-                else:
-                    database.set_cached_censorship(sig, is_censored)
+                    print(f"✂️ [LYRICS DETECTED]: Обнаружены скрытые купюры (***) -> сохранён статус Clean")
+                elif text_was_read:
+                    database.set_cached_censorship(sig, False)
     except Exception as e:
         print(f"❌ [YM STREAM ERROR]: Ошибка загрузки из официального каталога: {e}")
         raise Exception("Не удалось выгрузить аудиозапись с официальной площадки (ограничение прав или региона).")
@@ -1165,9 +1205,7 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
     raw_title = raw_info.get('title', 'Track')
     raw_uploader = raw_info.get('uploader') or raw_info.get('channel', 'Artist')
     
-    # Для SoundCloud цензура всегда отключена
     is_censored = False
-    
     final_artist, final_title = parse_sc_title_and_artist(raw_title, raw_uploader)
     cover_url = raw_info.get('thumbnail')
 
