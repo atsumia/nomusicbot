@@ -498,14 +498,18 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         duration = int(float(item.get('duration', 0) or 0))
         dur_str = format_duration(duration) if duration > 0 else ""
         is_long = duration > LONG_TRACK_THRESHOLD
+        
+        is_censored = item.get('is_censored', False)
+        censor_badge = " ✂️️" if is_censored else ""
         warn_badge = f" ⏳ {dur_str}" if is_long and dur_str else ""
+        badges = f"{censor_badge}{warn_badge}"
         
         title_artist = f"{item['uploader']} - {item['title']}"
-        max_title_len = 34 if is_long else 40
+        max_title_len = max(18, 40 - len(badges))
         if len(title_artist) > max_title_len:
             title_artist = title_artist[:max_title_len - 3] + "..."
             
-        btn_text = f"{idx}. {title_artist}{warn_badge}"
+        btn_text = f"{idx}. {title_artist}{badges}"
         buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"dl:{short_id}")])
 
     nav_row = []
@@ -524,7 +528,7 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
             buttons.append([InlineKeyboardButton(text="🎵 Искать на оф. площадках", callback_data="switch_artist:official")])
     else:
         if search_mode == "official":
-            buttons.append([InlineKeyboardButton(text="☁️ Искать в SoundCloud", callback_data="switch:remix")])
+            buttons.append([InlineKeyboardButton(text="☁️️ Искать в SoundCloud", callback_data="switch:remix")])
         else:
             buttons.append([InlineKeyboardButton(text="🎵 Официальные площадки", callback_data="switch:official")])
 
@@ -539,7 +543,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
             mode_lbl = "на официальных площадках" if user_mode == "official" else "в SoundCloud"
             switch_kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text="☁️️ Попробовать в SoundCloud" if user_mode == "official" else "🎵 Попробовать на оф. площадках",
+                    text="☁️ Попробовать в SoundCloud" if user_mode == "official" else "🎵 Попробовать на оф. площадках",
                     callback_data="switch:remix" if user_mode == "official" else "switch:official"
                 )
             ]])
@@ -558,7 +562,7 @@ async def perform_search_and_send(chat_id: int, user_id: int, query: str, user_m
         }
 
         kb = build_search_keyboard(user_id, page=0)
-        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️️ Ремиксы (SoundCloud)"
+        mode_title = "🎵 Официальные релизы" if user_mode == "official" else "☁️ Ремиксы (SoundCloud)"
         await status_msg.edit_text(f"Результаты: <b>{mode_title}</b>", reply_markup=kb, parse_mode="HTML")
     except Exception as e:
         await status_msg.edit_text(f"Ошибка поиска: {str(e)}")
@@ -606,7 +610,7 @@ async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_quer
         if not results:
             switch_kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text="☁️ Искать в SoundCloud" if user_mode == "official" else "🎵 Искать на оф. площадках",
+                    text="☁ Искать в SoundCloud" if user_mode == "official" else "🎵 Искать на оф. площадках",
                     callback_data="switch_artist:remix" if user_mode == "official" else "switch_artist:official"
                 )
             ]])
@@ -723,7 +727,8 @@ async def callback_download(callback: CallbackQuery):
         item['url'], 
         status_msg,
         artist_id=item.get('artist_id'),
-        album_id=item.get('album_id')
+        album_id=item.get('album_id'),
+        is_censored=item.get('is_censored', False)
     )
 
 @dp.callback_query(F.data.startswith("confirm_dl:"))
@@ -755,7 +760,8 @@ async def callback_confirm_download(callback: CallbackQuery):
         item['url'], 
         status_msg,
         artist_id=item.get('artist_id'),
-        album_id=item.get('album_id')
+        album_id=item.get('album_id'),
+        is_censored=item.get('is_censored', False)
     )
 
 @dp.callback_query(F.data == "back_to_results")
@@ -887,7 +893,7 @@ async def callback_noop(callback: CallbackQuery):
     await callback.answer()
 
 async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message, 
-                               artist_id: str = None, album_id: str = None):
+                               artist_id: str = None, album_id: str = None, is_censored: bool = False):
     file_path = None
     thumb_path = None
     try:
@@ -895,6 +901,7 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
         track = await download_track(url)
         file_path = track['file_path']
         thumb_path = track.get('thumb_path')
+        censored_status = track.get('is_censored', is_censored)
 
         file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
         if file_size_mb > 49.5:
@@ -926,9 +933,13 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
 
         kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
+        caption_note = "✂️ <i>Цензурная версия (Clean)</i>" if censored_status else None
+
         sent_msg = await bot.send_audio(
             chat_id=chat_id,
             audio=audio,
+            caption=caption_note,
+            parse_mode="HTML" if caption_note else None,
             performer=track['artist'],
             title=track['title'],
             duration=track['duration'],
@@ -1006,6 +1017,45 @@ async def inline_search_handler(inline_query: InlineQuery):
         print(f"❌ [INLINE LOCAL DB ERROR]: {e}")
         await inline_query.answer([], cache_time=2, is_personal=True)
 
+# ================= REST API ДЛЯ MINI APP =================
+async def api_search_handler(request: web.Request):
+    """
+    REST API для Telegram Mini App плеера
+    """
+    query = request.query.get("q", "").strip()
+    mode = request.query.get("mode", "official")
+    
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Content-Type": "application/json"
+    }
+
+    if request.method == "OPTIONS":
+        return web.Response(headers=headers)
+
+    if not query:
+        return web.json_response({"results": []}, headers=headers)
+
+    try:
+        results = await search_tracks(query, mode=mode, limit=15)
+        formatted = []
+        for t in results:
+            formatted.append({
+                "id": str(t.get("id")),
+                "title": t.get("title"),
+                "artist": t.get("uploader") or t.get("artist") or "Исполнитель",
+                "cover": t.get("thumb_path") or t.get("cover") or "",
+                "duration": t.get("duration", 0),
+                "url": t.get("url"),
+                "is_censored": t.get("is_censored", False)
+            })
+        return web.json_response({"results": formatted}, headers=headers)
+    except Exception as e:
+        return web.json_response({"error": str(e), "results": []}, headers=headers)
+# =========================================================
+
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
 
@@ -1013,6 +1063,9 @@ async def start_dummy_web_server():
     app = web.Application()
     app.router.add_get('/', handle_health_check)
     app.router.add_get('/health', handle_health_check)
+    
+    app.router.add_get('/api/search', api_search_handler)
+    app.router.add_options('/api/search', api_search_handler)
     
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
