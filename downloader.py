@@ -16,8 +16,9 @@ load_dotenv()
 shazam = Shazam()
 ym_client = None
 
+# Расширенные маркеры цензурированных версий (русский и английский)
 CENSORSHIP_PATTERN = re.compile(
-    r'\b(clean|clean\s*version|censored|radio\s*edit|radio\s*version|цензур(?:а|ная|ный|ом|кой)?|без\s*мата|запикано|cut\s*version)\b',
+    r'(?:[\(\[\{]|\b)(clean(?:\s*version)?|censored|radio\s*edit|radio\s*version|цензур(?:а|ная|ный|ом|кой|ка)?|без\s*мата|запикано|cut\s*version)(?:[\)\]\}]|\b)',
     re.IGNORECASE
 )
 
@@ -28,18 +29,15 @@ def normalize_text_ru(text: str) -> str:
     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
     return re.sub(r'\s+', ' ', cleaned).strip()
 
-def is_track_censored(track_name: str, explicitness: str = "", album_name: str = "") -> bool:
-    """
-    Определяет, подверглась ли композиция цензуре:
-    - По официальному флагу стриминговых витрин: trackExplicitness == 'cleaned'
-    - По маркерам в названии (Clean, Radio Edit, Цензура, Без мата и т.д.)
-    Оригинальные треки (включая Explicit 18+ и треки без мата изначально) возвращают False.
-    """
-    if str(explicitness).lower().strip() == 'cleaned':
+def is_track_censored(track_name: str, explicitness: str = "", album_name: str = "", collection_explicitness: str = "") -> bool:
+    expl = str(explicitness).lower().strip()
+    coll_expl = str(collection_explicitness).lower().strip()
+    
+    if expl == 'cleaned' or coll_expl == 'cleaned':
         return True
     
-    combined_meta = f"{track_name} {album_name}"
-    if CENSORSHIP_PATTERN.search(combined_meta):
+    combined = f"{track_name} {album_name}"
+    if CENSORSHIP_PATTERN.search(combined):
         return True
         
     return False
@@ -111,7 +109,10 @@ ARTIST_ALIASES = {
     'плм': 'ПОЛМАТЕРИ',
     'полматери': 'ПОЛМАТЕРИ',
     'серега пират': 'Серёга Пират',
-    'серёга пират': 'Серёга Пират'
+    'серёга пират': 'Серёга Пират',
+    'буда': 'OG Buda',
+    'ог буда': 'OG Buda',
+    'og buda': 'OG Buda'
 }
 
 def normalize_search_query(query: str) -> str:
@@ -208,42 +209,104 @@ def parse_sc_title_and_artist(raw_title: str, uploader: str):
 
     return base_artist, f"{base_title}{tag_suffix}"
 
-def strict_text_filter(tracks: list, original_query: str, normalized_query: str) -> list:
-    filtered = []
-    def extract_words(text):
-        clean = normalize_text_ru(text)
-        return set([w for w in clean.split() if len(w) >= 2])
+def score_and_sort_tracks(tracks: list, query: str) -> list:
+    """
+    Интеллектуальное ранжирование с защитой от коллизий артистов и названий:
+    - Защищает запросы по артистам: если запрос совпадает с исполнителем,
+      его официальные треки получают наивысший приоритет.
+    - Защищает запросы по названиям: если запрос совпадает с песней,
+      она выходит на 1 место, не уступая неизвестным артистам-однофамильцам.
+    - Максимальный приоритет для связки «Артист + Название».
+    - Бонус оригинальным (Explicit / Non-censored) версиям.
+    """
+    norm_q = normalize_text_ru(query)
+    q_words = set(norm_q.split())
 
-    orig_words = extract_words(original_query)
-    norm_words = extract_words(normalized_query)
-    check_words = orig_words.union(norm_words)
+    # Проверяем, является ли запрос именем артиста из нашей базы алиасов
+    is_artist_alias_query = False
+    for k, v in ARTIST_ALIASES.items():
+        if norm_q in (normalize_text_ru(k), normalize_text_ru(v)):
+            is_artist_alias_query = True
+            break
 
-    if not check_words:
-        return tracks
+    def get_score(t):
+        score = 0
+        t_title = normalize_text_ru(t.get('title', ''))
+        t_artist = normalize_text_ru(t.get('uploader', ''))
+        combined = f"{t_artist} {t_title}"
+        combined_rev = f"{t_title} {t_artist}"
 
-    for t in tracks:
-        track_text = normalize_text_ru(f"{t.get('uploader', '')} {t.get('title', '')}")
-        track_words = set(track_text.split())
-        if any(any(tw.startswith(w) or w in tw for tw in track_words) or w in track_text for w in check_words):
-            filtered.append(t)
-    return filtered
+        # 1. Точное совпадение связки Артист + Название (абсолютный приоритет)
+        if combined == norm_q or combined_rev == norm_q:
+            score += 350
+        elif norm_q in combined:
+            score += 80
+
+        # 2. Обработка совпадений по исполнителю (защита запросов вроде "kizaru", "macan")
+        if t_artist == norm_q:
+            score += 250
+        elif t_artist.startswith(norm_q):
+            score += 130
+        elif norm_q in t_artist:
+            score += 70
+
+        # 3. Обработка совпадений по названию трека (защита запросов вроде "baby drac", "порш")
+        if t_title == norm_q:
+            # Если запрос был именем известного артиста (например, "kizaru"),
+            # чужой трек с названием "kizaru" не должен перебивать хиты самого Kizaru
+            if is_artist_alias_query and t_artist != norm_q:
+                score += 80
+            else:
+                score += 220
+        elif t_title.startswith(norm_q):
+            score += 100
+        elif norm_q in t_title:
+            score += 50
+
+        # 4. Совпадение отдельных слов
+        title_words = set(t_title.split())
+        artist_words = set(t_artist.split())
+        for qw in q_words:
+            if qw in artist_words:
+                score += 35
+            elif any(aw.startswith(qw) for aw in artist_words):
+                score += 15
+            if qw in title_words:
+                score += 30
+            elif any(tw.startswith(qw) for tw in title_words):
+                score += 15
+
+        # 5. Бонус за оригиналы (не цензура)
+        if not t.get('is_censored', False):
+            score += 15
+
+        # 6. Приоритет источника Apple Music (songTerm / general)
+        score += t.get('source_priority', 0)
+
+        return score
+
+    return sorted(tracks, key=get_score, reverse=True)
 
 async def search_apple_catalog(query: str, limit: int = 15):
     normalized = normalize_search_query(query)
     term = urllib.parse.quote(normalized)
-    url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&limit={limit * 2}"
+    
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json'
     }
 
+    url_general = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&explicit=Yes&limit=50"
+    url_song_only = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&attribute=songTerm&explicit=Yes&limit=50"
+
     results = []
-    try:
-        timeout = aiohttp.ClientTimeout(total=4.0)
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+
+    async def fetch_endpoint(session, url, priority=0):
+        try:
             async with session.get(url) as resp:
                 if resp.status == 200:
                     data = await resp.json(content_type=None)
+                    items = []
                     for item in data.get('results', []):
                         if item.get('kind') != 'song':
                             continue
@@ -252,8 +315,14 @@ async def search_apple_catalog(query: str, limit: int = 15):
                         artist = item.get('artistName', 'Артист')
                         album_title = item.get('collectionName', '')
                         explicitness = str(item.get('trackExplicitness', ''))
+                        collection_explicitness = str(item.get('collectionExplicitness', ''))
                         
-                        censored_flag = is_track_censored(title, explicitness=explicitness, album_name=album_title)
+                        censored_flag = is_track_censored(
+                            title, 
+                            explicitness=explicitness, 
+                            album_name=album_title,
+                            collection_explicitness=collection_explicitness
+                        )
                         
                         raw_art = item.get('artworkUrl100', '')
                         cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
@@ -272,7 +341,7 @@ async def search_apple_catalog(query: str, limit: int = 15):
                         }
                         encoded_url = "am://" + urllib.parse.urlencode(params)
                         
-                        results.append({
+                        items.append({
                             'id': f"am_{tid}",
                             'raw_id': tid,
                             'title': title,
@@ -284,14 +353,32 @@ async def search_apple_catalog(query: str, limit: int = 15):
                             'album_title': album_title or None,
                             'cover_url': cover_hq,
                             'is_censored': censored_flag,
-                            'source': 'official'
+                            'source': 'official',
+                            'source_priority': priority
                         })
+                    return items
+        except Exception as e:
+            print(f"❌ [APPLE SEARCH SUBQUERY ERROR]: {e}")
+        return []
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=4.5)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            res_song, res_gen = await asyncio.gather(
+                fetch_endpoint(session, url_song_only, priority=30),
+                fetch_endpoint(session, url_general, priority=0),
+                return_exceptions=True
+            )
+            if isinstance(res_song, list):
+                results.extend(res_song)
+            if isinstance(res_gen, list):
+                results.extend(res_gen)
     except Exception as e:
         print(f"❌ [APPLE MUSIC SEARCH ERROR]: {e}")
 
     unique = deduplicate_tracks(results)
-    filtered = strict_text_filter(unique, query, normalized)
-    return filtered[:limit] if filtered else unique[:limit]
+    ranked = score_and_sort_tracks(unique, query)
+    return ranked[:limit]
 
 async def search_tracks_by_lyrics(query: str, limit: int = 15) -> list:
     query_clean = query.strip()
@@ -430,7 +517,7 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
 
             if not artist_id:
                 try:
-                    song_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&limit=5"
+                    song_search_url = f"https://itunes.apple.com/search?term={term}&country=ru&entity=song&explicit=Yes&limit=5"
                     timeout = aiohttp.ClientTimeout(total=4.0)
                     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                         async with session.get(song_search_url) as resp:
@@ -446,7 +533,7 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
 
         tracks = []
         if artist_id:
-            lookup_url = f"https://itunes.apple.com/lookup?id={artist_id}&entity=song&limit={limit}&country=ru"
+            lookup_url = f"https://itunes.apple.com/lookup?id={artist_id}&entity=song&explicit=Yes&limit={limit}&country=ru"
             try:
                 timeout = aiohttp.ClientTimeout(total=5.0)
                 async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
@@ -462,8 +549,14 @@ async def search_artist_discography(artist_query: str, mode: str = "official", l
                                     artist = item.get('artistName', artist_display_name)
                                     album_title = item.get('collectionName', '')
                                     explicitness = str(item.get('trackExplicitness', ''))
+                                    collection_explicitness = str(item.get('collectionExplicitness', ''))
                                     
-                                    censored_flag = is_track_censored(title, explicitness=explicitness, album_name=album_title)
+                                    censored_flag = is_track_censored(
+                                        title, 
+                                        explicitness=explicitness, 
+                                        album_name=album_title,
+                                        collection_explicitness=collection_explicitness
+                                    )
                                     
                                     raw_art = item.get('artworkUrl100', '')
                                     cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
@@ -521,7 +614,7 @@ async def get_am_album_tracks(album_id: str):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json'
     }
-    url = f"https://itunes.apple.com/lookup?id={album_id}&entity=song&country=ru"
+    url = f"https://itunes.apple.com/lookup?id={album_id}&entity=song&explicit=Yes&country=ru"
     tracks = []
     try:
         timeout = aiohttp.ClientTimeout(total=5.0)
@@ -531,16 +624,23 @@ async def get_am_album_tracks(album_id: str):
                     data = await resp.json(content_type=None)
                     results = data.get('results', [])
                     album_title = 'Альбом'
+                    coll_expl = ''
                     for item in results:
                         if item.get('wrapperType') == 'collection':
                             album_title = item.get('collectionName', album_title)
+                            coll_expl = str(item.get('collectionExplicitness', ''))
                         elif item.get('wrapperType') == 'track' and item.get('kind') == 'song':
                             tid = str(item.get('trackId'))
                             title = item.get('trackName', 'Без названия')
                             artist = item.get('artistName', 'Артист')
                             explicitness = str(item.get('trackExplicitness', ''))
                             
-                            censored_flag = is_track_censored(title, explicitness=explicitness, album_name=album_title)
+                            censored_flag = is_track_censored(
+                                title, 
+                                explicitness=explicitness, 
+                                album_name=album_title,
+                                collection_explicitness=coll_expl
+                            )
                             
                             raw_art = item.get('artworkUrl100', '')
                             cover_hq = raw_art.replace('100x100bb', '600x600bb') if raw_art else None
@@ -622,9 +722,8 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
         })
 
     unique_tracks = deduplicate_tracks(results)
-    query_to_check = original_query if original_query else query
-    filtered_tracks = strict_text_filter(unique_tracks, query_to_check, query)
-    return filtered_tracks[:limit]
+    ranked_tracks = score_and_sort_tracks(unique_tracks, query)
+    return ranked_tracks[:limit]
 
 async def download_official_track(url_data: str, output_dir: str = "/tmp") -> dict:
     os.makedirs(output_dir, exist_ok=True)
