@@ -1,9 +1,6 @@
 import os
+import json
 import asyncio
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -20,8 +17,10 @@ from aiogram.types import (
     InlineQuery,
     InlineQueryResultCachedAudio,
     InlineQueryResultArticle,
-    InputTextMessageContent
+    InputTextMessageContent,
+    WebAppInfo
 )
+from dotenv import load_dotenv
 
 import database
 from downloader import (
@@ -33,7 +32,11 @@ from downloader import (
     get_ym_client
 )
 
+load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# АДРЕС ВАШЕГО MINI APP (GitHub Pages)
+WEBAPP_URL = "https://atsumia.github.io/nomusicbot/"
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан!")
@@ -71,9 +74,10 @@ def get_bottom_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     mode_label = "Режим: Официальные" if user['search_mode'] == 'official' else "Режим: SoundCloud"
     
     keyboard = [
-        [KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="🎙 Поиск артиста")],
-        [KeyboardButton(text="📝 Поиск по тексту"), KeyboardButton(text=f"🎧 {mode_label}")],
-        [KeyboardButton(text="👤 Мой кабинет")]
+        [KeyboardButton(text="🎵 Открыть плеер", web_app=WebAppInfo(url=WEBAPP_URL)), 
+         KeyboardButton(text="🔎 Поиск")],
+        [KeyboardButton(text="🎙 Поиск артиста"), KeyboardButton(text="📝 Поиск по тексту")],
+        [KeyboardButton(text="👤 Мой кабинет"), KeyboardButton(text=f"🎧 {mode_label}")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -82,6 +86,7 @@ def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
     
     keyboard = [
+        [InlineKeyboardButton(text="✨ Открыть NoMusic Player", web_app=WebAppInfo(url=WEBAPP_URL))],
         [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
          InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
         [InlineKeyboardButton(text="📝 Поиск по тексту песни", callback_data="menu:lyrics_search")],
@@ -110,6 +115,46 @@ def get_admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🔙 В главное меню", callback_data="menu:main")]
     ])
 
+# ================= ХЭНДЛЕР MINI APP (СКАЧИВАНИЕ ИЗ ПЛЕЕРА) =================
+@dp.message(F.web_app_data)
+async def web_app_download_handler(message: types.Message):
+    """
+    Принимает клик на кнопку 'Скачать в чат' из WebApp плеера
+    """
+    try:
+        data = json.loads(message.web_app_data.data)
+        action = data.get("action")
+        
+        if action == "download_track":
+            query = data.get("query", "").strip()
+            if not query:
+                return
+            
+            user = database.get_user(message.from_user.id)
+            mode = user.get('search_mode', 'official')
+            status_msg = await message.answer(f"⚡ <i>Загружаю из плеера:</i> <b>{query}</b>...", parse_mode="HTML")
+            
+            # Делаем быстрый поиск по запросу, чтобы получить прямую ссылку
+            results = await search_tracks(query, mode=mode, limit=1)
+            if not results:
+                await status_msg.edit_text("Не удалось найти аудиопоток для скачивания 🥲")
+                return
+            
+            track = results[0]
+            await process_and_send_audio(
+                message.chat.id, 
+                message.from_user.id, 
+                track['id'], 
+                track['url'], 
+                status_msg,
+                artist_id=track.get('artist_id'),
+                album_id=track.get('album_id'),
+                is_censored=track.get('is_censored', False)
+            )
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка обработки запроса из плеера: {e}")
+# ===========================================================================
+
 @dp.message(Command("admin"))
 async def admin_command_handler(message: types.Message):
     if not is_admin(message.from_user.id):
@@ -120,7 +165,7 @@ async def admin_command_handler(message: types.Message):
 async def admin_menu_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
-    await callback.message.edit_text("⚡️ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
+    await callback.message.edit_text("⚡ <b>Панель управления NoMusic</b>", reply_markup=get_admin_menu(), parse_mode="HTML")
     await callback.answer()
 
 @dp.callback_query(F.data == "admin:stats")
@@ -500,7 +545,8 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         is_long = duration > LONG_TRACK_THRESHOLD
         
         is_censored = item.get('is_censored', False)
-        censor_badge = " ✂️️" if is_censored else ""
+        # Компактный значок цензуры
+        censor_badge = " ✂️" if is_censored else ""
         warn_badge = f" ⏳ {dur_str}" if is_long and dur_str else ""
         badges = f"{censor_badge}{warn_badge}"
         
@@ -517,7 +563,7 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
         nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"page:{page - 1}"))
     nav_row.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
-        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"page:{page + 1}"))
+        nav_row.append(InlineKeyboardButton(text="➡️️", callback_data=f"page:{page + 1}"))
     if nav_row:
         buttons.append(nav_row)
 
@@ -528,7 +574,7 @@ def build_search_keyboard(user_id: int, page: int = 0) -> InlineKeyboardMarkup:
             buttons.append([InlineKeyboardButton(text="🎵 Искать на оф. площадках", callback_data="switch_artist:official")])
     else:
         if search_mode == "official":
-            buttons.append([InlineKeyboardButton(text="☁️️ Искать в SoundCloud", callback_data="switch:remix")])
+            buttons.append([InlineKeyboardButton(text="☁️ Искать в SoundCloud", callback_data="switch:remix")])
         else:
             buttons.append([InlineKeyboardButton(text="🎵 Официальные площадки", callback_data="switch:official")])
 
@@ -610,7 +656,7 @@ async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_quer
         if not results:
             switch_kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(
-                    text="☁ Искать в SoundCloud" if user_mode == "official" else "🎵 Искать на оф. площадках",
+                    text="☁️ Искать в SoundCloud" if user_mode == "official" else "🎵 Искать на оф. площадках",
                     callback_data="switch_artist:remix" if user_mode == "official" else "switch_artist:official"
                 )
             ]])
@@ -1064,6 +1110,7 @@ async def start_dummy_web_server():
     app.router.add_get('/', handle_health_check)
     app.router.add_get('/health', handle_health_check)
     
+    # Регистрация роутов для Mini App
     app.router.add_get('/api/search', api_search_handler)
     app.router.add_options('/api/search', api_search_handler)
     
