@@ -2,9 +2,14 @@ import sqlite3
 import os
 import re
 
-DB_NAME = "database.db"
+# Поддержка постоянного диска на Railway (например, /app/data/database.db)
+DB_NAME = os.getenv("DB_PATH", "database.db")
 
 def get_connection():
+    db_dir = os.path.dirname(DB_NAME)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
     conn = sqlite3.connect(DB_NAME, timeout=20.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
@@ -63,7 +68,6 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_favorites_user_track ON favorites(user_id, track_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_censor_signature ON censorship_cache(track_signature)")
 
-        # Сброс старых ошибочных нулей, чтобы треки вроде Lost Angeles проверились заново
         try:
             c.execute("DELETE FROM censorship_cache WHERE is_censored = 0")
         except Exception:
