@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# SQLite databases
+*.db
+*.sqlite3
+
+# Temp files
+*.mp3
+*.jpg
+*.jpeg
+*.png

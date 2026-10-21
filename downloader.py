@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 import aiohttp
 import asyncio
 import urllib.parse
@@ -16,6 +17,19 @@ load_dotenv()
 
 shazam = Shazam()
 ym_client = None
+SC_AUTH_TOKEN = os.getenv("SOUNDCLOUD_AUTH_TOKEN")
+DEFAULT_TMP_DIR = tempfile.gettempdir()
+
+async def resolve_sc_url(url: str) -> str:
+    """Разрешает короткие мобильные ссылки on.soundcloud.com в полный URL"""
+    if "on.soundcloud.com" in url or "soundcloud.app.goo.gl" in url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, allow_redirects=True) as resp:
+                    return str(resp.url).split('?')[0]
+        except Exception:
+            pass
+    return url
 
 # 1. Поиск визуальных купюр, многоточий и звездочек (Clean/Radio версии)
 CENSORSHIP_PATTERN = re.compile(
@@ -1046,6 +1060,8 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
         'no_warnings': True,
         'extract_flat': 'in_playlist',
     }
+    if SC_AUTH_TOKEN:
+        search_opts['http_headers'] = {'Authorization': f'OAuth {SC_AUTH_TOKEN}'}
     entries = []
     with yt_dlp.YoutubeDL(search_opts) as ydl:
         try:
@@ -1087,7 +1103,21 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
     ranked_tracks = score_and_sort_tracks(unique_tracks, query)
     return ranked_tracks[:limit]
 
-async def download_official_track(url_data: str, output_dir: str = "/tmp") -> dict:
+async def download_best_ym_stream(track, path: str):
+    """Выбирает максимальный реально доступный битрейт (320, 192 или 128 kbps)"""
+    try:
+        download_info = await track.get_download_info_async()
+        mp3_info = [i for i in download_info if i.codec == 'mp3']
+        best = max(mp3_info, key=lambda x: x.bitrate_in_kbps) if mp3_info else (download_info[0] if download_info else None)
+        if best:
+            await best.download_async(path)
+        else:
+            await track.download_async(filename=path)
+    except Exception as e:
+        print(f"YM download stream error: {e}")
+        raise e
+
+async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_DIR) -> dict:
     os.makedirs(output_dir, exist_ok=True)
     raw_query = url_data.replace("am://", "")
     params = urllib.parse.parse_qs(raw_query)
@@ -1126,7 +1156,7 @@ async def download_official_track(url_data: str, output_dir: str = "/tmp") -> di
                 target_ym_track = sr.tracks.results[0]
 
         if target_ym_track:
-            dl_task = target_ym_track.download_async(filename=mp3_path, codec='mp3', bitrate_in_kbps=320)
+            dl_task = download_best_ym_stream(target_ym_track, mp3_path)
             lyrics_task = check_ym_track_censorship(client, target_ym_track)
 
             dl_res, lyrics_result = await asyncio.gather(dl_task, lyrics_task, return_exceptions=True)
@@ -1209,7 +1239,8 @@ async def download_official_track(url_data: str, output_dir: str = "/tmp") -> di
         'is_censored': is_censored
     }
 
-async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
+async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict:
+    url = await resolve_sc_url(url)
     os.makedirs(output_dir, exist_ok=True)
     temp_template = os.path.join(output_dir, '%(id)s.%(ext)s')
 
@@ -1225,6 +1256,8 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
         'quiet': True,
         'no_warnings': True,
     }
+    if SC_AUTH_TOKEN:
+        ydl_opts['http_headers'] = {'Authorization': f'OAuth {SC_AUTH_TOKEN}'}
 
     loop = asyncio.get_event_loop()
 
@@ -1237,8 +1270,12 @@ async def download_sc_track(url: str, output_dir: str = "/tmp") -> dict:
                 mp3_path = f"{base}.mp3"
                 return mp3_path, base, info
         except yt_dlp.utils.DownloadError as e:
-            if "DRM protected" in str(e) or "DRM" in str(e):
-                raise Exception("Трек защищен правообладателем (DRM SoundCloud Premium) и недоступен для скачивания 😔")
+            err_str = str(e).lower()
+            if "drm" in err_str or "go+" in err_str or "premium" in err_str or "not available" in err_str or "401" in err_str:
+                if not SC_AUTH_TOKEN:
+                    raise Exception("Трек защищен правообладателем (DRM SoundCloud Premium). Укажите SOUNDCLOUD_AUTH_TOKEN в .env для доступа к Premium трекам.")
+                else:
+                    raise Exception("Трек защищен правообладателем (DRM SoundCloud Premium) и недоступен для скачивания даже с токеном 😔")
             raise Exception("Ошибка загрузки аудиозаписи из SoundCloud.")
         except Exception as e:
             raise Exception(f"Ошибка загрузки SoundCloud: {str(e)}")
