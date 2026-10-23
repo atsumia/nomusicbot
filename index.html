@@ -1,1002 +1,833 @@
 <!DOCTYPE html>
-<html lang="ru" class="dark">
+<html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>NoMusic — Spotify Glassmorphism WebApp</title>
-    <!-- Tailwind CSS (Antigravity allowlisted CDN) -->
-    <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
-    <!-- Telegram WebApp SDK -->
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        * {
-            -webkit-tap-highlight-color: transparent;
-            font-family: -apple-system, BlinkMacSystemFont, "Circular", "Spotify Mix", "Inter", "SF Pro Display", sans-serif;
-            user-select: none;
-            -webkit-user-select: none;
-        }
-        body {
-            overscroll-behavior-y: none;
-            background-color: #121212;
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>NoMusic TMA</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    * {
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      background: #0a0a0f;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Display', sans-serif;
+      overscroll-behavior: none;
+      min-height: 100vh;
+    }
 
-        /* Glassmorphism Classes */
-        .glass-nav {
-            background: rgba(18, 18, 18, 0.88);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-        }
-        .glass-header {
-            background: rgba(18, 18, 18, 0.82);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-        }
-        .glass-card {
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.35);
-        }
-        .glass-card:hover, .glass-card:active {
-            background: rgba(255, 255, 255, 0.08);
-            border-color: rgba(255, 255, 255, 0.15);
-        }
-        .glass-player {
-            background: rgba(22, 22, 22, 0.90);
-            backdrop-filter: blur(28px);
-            -webkit-backdrop-filter: blur(28px);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75);
-        }
-        .glass-pill {
-            background: rgba(255, 255, 255, 0.08);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-        }
-        .spotify-green {
-            background-color: #1DB954;
-        }
-        .spotify-green:hover {
-            background-color: #1ed760;
-        }
-        .spotify-green-text {
-            color: #1DB954;
-        }
-        .no-scrollbar::-webkit-scrollbar {
-            display: none;
-        }
-        .no-scrollbar {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
-        }
+    /* ── scrollbars ── */
+    ::-webkit-scrollbar { display: none; }
 
-        /* Scrubber slider */
-        input[type=range] {
-            -webkit-appearance: none;
-            background: transparent;
-        }
-        input[type=range]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            height: 12px;
-            width: 12px;
-            border-radius: 50%;
-            background: #FFFFFF;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
-            cursor: pointer;
-            margin-top: -4px;
-            transition: transform 0.1s;
-        }
-        input[type=range]:active::-webkit-slider-thumb {
-            transform: scale(1.3);
-            background: #1DB954;
-        }
-        input[type=range]::-webkit-slider-runnable-track {
-            height: 4px;
-            border-radius: 2px;
-            background: rgba(255, 255, 255, 0.2);
-        }
-    </style>
+    /* ── glass surfaces ── */
+    .glass { background: rgba(255,255,255,0.06); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.09); }
+    .glass-dark { background: rgba(10,10,15,0.85); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); border: 1px solid rgba(255,255,255,0.08); }
+    .glass-card { background: rgba(255,255,255,0.05); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); transition: background .15s, border-color .15s; }
+    .glass-card:active { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.16); }
+
+    /* ── accent ── */
+    .accent { background: #1DB954; }
+    .accent-text { color: #1DB954; }
+    .accent-border { border-color: #1DB954; }
+
+    /* ── bottom nav ── */
+    #bottom-nav { background: rgba(10,10,15,0.92); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); border-top: 1px solid rgba(255,255,255,0.07); }
+
+    /* ── range input ── */
+    input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; }
+    input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.18); }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; margin-top: -5.5px; box-shadow: 0 0 0 2px rgba(29,185,84,.6); }
+    .progress-track { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.18); position: relative; overflow: hidden; }
+    .progress-fill { height: 100%; background: #1DB954; border-radius: 2px; transition: width .2s linear; }
+
+    /* ── screens ── */
+    .screen { display: none; }
+    .screen.active { display: flex; flex-direction: column; }
+
+    /* ── player sheet ── */
+    #player-sheet { position: fixed; inset: 0; z-index: 80; transform: translateY(100%); transition: transform .4s cubic-bezier(.32,.72,0,1); background: #0a0a0f; display: flex; flex-direction: column; }
+    #player-sheet.open { transform: translateY(0); }
+
+    /* ── mini player ── */
+    #mini-player { transition: opacity .3s, transform .3s; }
+    #mini-player.hidden-mini { opacity: 0; pointer-events: none; transform: translateY(20px); }
+
+    /* ── search input ── */
+    input[type=text] { outline: none; }
+
+    /* ── album art glow ── */
+    .art-glow { filter: blur(40px); opacity: .55; }
+
+    /* ── pulse animation for active track ── */
+    @keyframes pulse-green { 0%,100%{box-shadow:0 0 0 0 rgba(29,185,84,.5)} 50%{box-shadow:0 0 0 8px rgba(29,185,84,0)} }
+    .playing-pulse { animation: pulse-green 2s infinite; }
+
+    /* ── equalizer bars ── */
+    @keyframes eq1 { 0%,100%{height:6px} 50%{height:14px} }
+    @keyframes eq2 { 0%,100%{height:12px} 50%{height:5px} }
+    @keyframes eq3 { 0%,100%{height:8px} 50%{height:16px} }
+    .eq-bar { width: 3px; border-radius: 2px; background: #1DB954; display: inline-block; }
+    .eq-bar:nth-child(1) { animation: eq1 .8s ease-in-out infinite; }
+    .eq-bar:nth-child(2) { animation: eq2 .9s ease-in-out infinite .1s; }
+    .eq-bar:nth-child(3) { animation: eq3 .7s ease-in-out infinite .2s; }
+
+    /* ── skeleton loader ── */
+    @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+    .skeleton { background: linear-gradient(90deg, rgba(255,255,255,.04) 25%, rgba(255,255,255,.09) 50%, rgba(255,255,255,.04) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 8px; }
+
+    /* ── swipe drag handle ── */
+    .drag-handle { width: 36px; height: 4px; background: rgba(255,255,255,.25); border-radius: 2px; margin: 0 auto; }
+
+    /* ── tab indicator ── */
+    .tab-btn { position: relative; transition: color .2s; }
+    .tab-btn.active { color: #1DB954; }
+    .tab-btn.active::after { content: ''; position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%); width: 4px; height: 4px; background: #1DB954; border-radius: 50%; }
+
+    /* ── category chip ── */
+    .chip { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 6px 14px; font-size: 13px; font-weight: 600; transition: all .15s; white-space: nowrap; flex-shrink: 0; }
+    .chip.active-chip { background: #1DB954; border-color: #1DB954; color: #000; }
+
+    /* ── volume slider ── */
+    input[type=range]#vol-slider::-webkit-slider-runnable-track { height: 3px; }
+    input[type=range]#vol-slider::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -4.5px; }
+
+    /* ── fav heart ── */
+    .fav-btn svg { transition: fill .2s, stroke .2s; }
+    .fav-btn.liked svg { fill: #ef4444; stroke: #ef4444; }
+
+    /* ── toast ── */
+    #toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(20px); background: rgba(30,30,30,.95); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; padding: 10px 18px; font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none; z-index: 200; transition: opacity .25s, transform .25s; white-space: nowrap; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  </style>
 </head>
-<body class="bg-[#121212] text-white min-h-screen pb-32 antialiased selection:bg-[#1DB954] selection:text-black">
+<body class="overflow-hidden">
 
-    <!-- Ambient Glass Gradient Background Spheres -->
-    <div class="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div class="absolute -top-24 -left-24 w-80 h-80 rounded-full bg-[#1DB954]/15 blur-[90px]"></div>
-        <div class="absolute top-1/3 -right-20 w-72 h-72 rounded-full bg-emerald-600/10 blur-[100px]"></div>
-        <div class="absolute -bottom-20 left-10 w-80 h-80 rounded-full bg-teal-500/10 blur-[100px]"></div>
+<!-- ══════════════════════════════════════════
+     SCREENS WRAPPER
+══════════════════════════════════════════ -->
+<div id="app" class="flex flex-col" style="height:100svh; padding-bottom: env(safe-area-inset-bottom);">
+
+  <!-- ── HEADER ── -->
+  <header id="app-header" class="glass-dark px-4 pt-3 pb-2.5 flex items-center justify-between flex-shrink-0" style="padding-top: max(12px, env(safe-area-inset-top));">
+    <div class="flex items-center gap-3">
+      <div id="avatar" class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-black text-black" style="background: linear-gradient(135deg,#1DB954,#38ef7d);">N</div>
+      <div>
+        <div id="greeting" class="text-xs font-semibold" style="color:rgba(255,255,255,.45)">Добрый день</div>
+        <div id="username" class="text-sm font-bold leading-none mt-0.5">Слушатель</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="flex items-center gap-1.5 glass rounded-full px-3 py-1 text-xs font-bold" style="color:#1DB954;">
+        <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block"></span>
+        NoMusic
+      </span>
+    </div>
+  </header>
+
+  <!-- ── SCREEN AREA ── -->
+  <div id="screens" class="flex-1 overflow-y-auto">
+
+    <!-- ══ HOME ══ -->
+    <div id="screen-home" class="screen active px-4 pb-2 gap-0">
+
+      <!-- Search Bar -->
+      <div class="relative mt-3 mb-4">
+        <div class="absolute left-3.5 top-1/2 -translate-y-1/2 opacity-40">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <input id="search-input" type="text" placeholder="Поиск треков, артистов…"
+          class="w-full pl-10 pr-10 py-3 glass-card rounded-2xl text-sm font-medium placeholder:opacity-40 text-white"
+          style="background:rgba(255,255,255,.06);"
+          oninput="onSearchInput(this.value)" onkeydown="if(event.key==='Enter'){doSearch(this.value)}" />
+        <button id="search-clear" class="absolute right-3.5 top-1/2 -translate-y-1/2 opacity-0 transition-opacity" onclick="clearSearch()">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Source chips -->
+      <div class="flex gap-2 overflow-x-auto pb-3 -mx-1 px-1">
+        <button class="chip active-chip" onclick="setChip(this,'official')">Официальные</button>
+        <button class="chip" onclick="setChip(this,'soundcloud')">SoundCloud</button>
+        <button class="chip" onclick="setChip(this,'all')">Все треки</button>
+      </div>
+
+      <!-- Search results / Trending -->
+      <div id="home-content">
+        <!-- Trending header -->
+        <div class="flex items-center justify-between mb-3 mt-1">
+          <h2 class="font-black text-base">В тренде</h2>
+          <span class="text-xs font-semibold opacity-40">Россия & СНГ</span>
+        </div>
+        <!-- Trending skeleton / tracks -->
+        <div id="track-list" class="flex flex-col gap-2.5"></div>
+      </div>
     </div>
 
-    <!-- Top Navigation Header -->
-    <header class="sticky top-0 z-40 glass-header px-4 py-3 flex items-center justify-between">
-        <div class="flex items-center space-x-3">
-            <div id="user-avatar" class="w-9 h-9 rounded-full bg-gradient-to-tr from-[#1DB954] to-emerald-300 text-black font-extrabold flex items-center justify-center text-sm shadow-lg shadow-[#1DB954]/20 ring-2 ring-white/10">
-                U
-            </div>
-            <div>
-                <span id="greeting-label" class="text-[11px] font-semibold text-[#A7A7A7] uppercase tracking-wider block leading-none">Добрый день</span>
-                <h1 id="user-display-name" class="font-extrabold text-base leading-tight mt-0.5 truncate max-w-[170px]">Слушатель</h1>
-            </div>
-        </div>
-
-        <div class="flex items-center space-x-2">
-            <div class="glass-pill px-2.5 py-1 rounded-full flex items-center space-x-1.5 text-[11px] font-medium text-emerald-400">
-                <span class="w-2 h-2 rounded-full bg-[#1DB954] animate-pulse"></span>
-                <span>NoMusic</span>
-            </div>
-            <button onclick="showQuickInfo()" title="О приложении" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/15 flex items-center justify-center text-zinc-300 transition active:scale-90">
-                <svg class="w-4 h-4 stroke-current" fill="none" viewBox="0 0 24 24" stroke-width="2">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="16" x2="12" y2="12"></line>
-                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                </svg>
-            </button>
-        </div>
-    </header>
-
-    <!-- Toast Notification -->
-    <div id="toast" class="fixed top-16 left-4 right-4 z-50 transform -translate-y-24 opacity-0 transition-all duration-300 pointer-events-none flex justify-center">
-        <div class="glass-player text-white text-xs font-semibold px-4 py-2.5 rounded-2xl shadow-2xl flex items-center space-x-2.5 border border-white/15">
-            <span id="toast-icon" class="w-4 h-4 text-[#1DB954] flex-shrink-0">
-                <svg class="w-4 h-4 fill-none stroke-current" stroke-width="2.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
-                </svg>
-            </span>
-            <span id="toast-text" class="text-white">Действие выполнено</span>
-        </div>
+    <!-- ══ LIBRARY ══ -->
+    <div id="screen-lib" class="screen px-4 pb-4 gap-0">
+      <div class="flex gap-2 mt-3 mb-4">
+        <button class="flex-1 py-2 rounded-xl text-sm font-bold transition accent text-black" onclick="setLibTab(this,'favs')" id="lib-tab-favs">Избранное</button>
+        <button class="flex-1 py-2 rounded-xl text-sm font-bold transition glass-card opacity-60" onclick="setLibTab(this,'hist')" id="lib-tab-hist">История</button>
+      </div>
+      <div id="lib-list" class="flex flex-col gap-2.5"></div>
     </div>
 
-    <!-- Main Content Container -->
-    <main class="relative z-10 max-w-md mx-auto px-4 pt-4">
-
-        <!-- ================= SECTION 1: HOME ================= -->
-        <section id="tab-home" class="space-y-6">
-
-            <!-- Spotify-like Quick Shortcuts Grid (2 cols) -->
-            <div class="grid grid-cols-2 gap-2.5">
-                <div onclick="filterCategory('favorites')" class="glass-card rounded-xl p-2.5 flex items-center space-x-3 cursor-pointer active:scale-95 transition group">
-                    <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-md flex-shrink-0">
-                        <svg class="w-5 h-5 fill-white" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-                    </div>
-                    <div class="truncate">
-                        <span class="font-bold text-xs truncate block">Любимые</span>
-                        <span id="home-fav-count" class="text-[10px] text-[#A7A7A7]">0 треков</span>
-                    </div>
-                </div>
-
-                <div onclick="filterCategory('top_cis')" class="glass-card rounded-xl p-2.5 flex items-center space-x-3 cursor-pointer active:scale-95 transition">
-                    <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-[#1DB954] to-teal-700 flex items-center justify-center shadow-md flex-shrink-0">
-                        <svg class="w-5 h-5 stroke-black fill-none" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                    </div>
-                    <div class="truncate">
-                        <span class="font-bold text-xs truncate block">Топ СНГ 2026</span>
-                        <span class="text-[10px] text-[#A7A7A7]">Официальные</span>
-                    </div>
-                </div>
-
-                <div onclick="filterCategory('remixes')" class="glass-card rounded-xl p-2.5 flex items-center space-x-3 cursor-pointer active:scale-95 transition">
-                    <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-orange-500 to-amber-700 flex items-center justify-center shadow-md flex-shrink-0">
-                        <svg class="w-5 h-5 fill-white" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
-                    </div>
-                    <div class="truncate">
-                        <span class="font-bold text-xs truncate block">SoundCloud</span>
-                        <span class="text-[10px] text-[#A7A7A7]">Remixes & Phonk</span>
-                    </div>
-                </div>
-
-                <div onclick="filterCategory('clean_only')" class="glass-card rounded-xl p-2.5 flex items-center space-x-3 cursor-pointer active:scale-95 transition">
-                    <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-sky-500 to-blue-700 flex items-center justify-center shadow-md flex-shrink-0">
-                        <svg class="w-5 h-5 stroke-white fill-none" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-                    </div>
-                    <div class="truncate">
-                        <span class="font-bold text-xs truncate block">Clean релизы</span>
-                        <span class="text-[10px] text-[#A7A7A7]">Без цензуры</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Horizontal Carousel: Трендовые треки -->
-            <div>
-                <div class="flex items-center justify-between mb-3 px-1">
-                    <h2 class="font-bold text-lg text-white tracking-tight">Популярно прямо сейчас</h2>
-                    <span onclick="renderHome()" class="text-xs font-semibold text-[#1DB954] cursor-pointer active:opacity-70">Обновить</span>
-                </div>
-                <div id="carousel-trending" class="flex space-x-3.5 overflow-x-auto no-scrollbar pb-2 pt-0.5">
-                    <!-- Carousel items loaded via JS -->
-                </div>
-            </div>
-
-            <!-- Популярные исполнители (Spotify circular cards) -->
-            <div>
-                <div class="flex items-center justify-between mb-3 px-1">
-                    <h2 class="font-bold text-lg text-white tracking-tight">Твои любимые артисты</h2>
-                </div>
-                <div id="artists-row" class="flex space-x-4 overflow-x-auto no-scrollbar pb-2">
-                    <!-- Artists loaded via JS -->
-                </div>
-            </div>
-
-            <!-- Быстрый баннер: Качество звука -->
-            <div class="glass-card rounded-2xl p-4 flex items-center justify-between border-emerald-500/20 bg-gradient-to-r from-emerald-950/30 to-transparent">
-                <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 rounded-xl bg-[#1DB954]/20 border border-[#1DB954]/40 flex items-center justify-center text-emerald-400">
-                        <svg class="w-5 h-5 fill-none stroke-current" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
-                    </div>
-                    <div>
-                        <div class="font-bold text-xs text-white">Высокий битрейт (320 kbps)</div>
-                        <div class="text-[11px] text-[#A7A7A7]">Официальные релизы и SoundCloud Go+</div>
-                    </div>
-                </div>
-                <span class="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">Studio HQ</span>
-            </div>
-
-        </section>
-
-        <!-- ================= SECTION 2: SEARCH ================= -->
-        <section id="tab-search" class="hidden space-y-4">
-
-            <!-- Switcher: Официальные vs SoundCloud -->
-            <div class="flex p-1 glass-card rounded-2xl text-xs font-semibold">
-                <button id="search-mode-off" onclick="setSearchMode('official')" class="flex-1 py-2 rounded-xl spotify-green text-black font-extrabold shadow-md transition flex items-center justify-center space-x-1.5">
-                    <svg class="w-3.5 h-3.5 fill-black" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-                    <span>Официальные</span>
-                </button>
-                <button id="search-mode-sc" onclick="setSearchMode('soundcloud')" class="flex-1 py-2 rounded-xl text-[#A7A7A7] hover:text-white transition flex items-center justify-center space-x-1.5">
-                    <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>
-                    <span>SoundCloud</span>
-                </button>
-            </div>
-
-            <!-- Glass Search Input Bar -->
-            <div class="relative">
-                <input type="text" id="search-input" placeholder="Название трека, артист или слова..." 
-                       class="w-full glass-card rounded-2xl px-4 py-3.5 pl-11 text-sm text-white placeholder-[#727272] focus:outline-none focus:ring-2 focus:ring-[#1DB954] focus:border-transparent transition shadow-inner">
-                <svg class="w-5 h-5 text-[#A7A7A7] absolute left-3.5 top-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                </svg>
-                <button onclick="clearSearch()" id="search-clear-btn" class="hidden absolute right-3.5 top-3.5 text-xs bg-white/10 hover:bg-white/20 text-[#A7A7A7] rounded-full w-5 h-5 flex items-center justify-center transition">✕</button>
-            </div>
-
-            <!-- Browse Genre Grid (Spotify Style) when search is empty -->
-            <div id="search-genre-tiles" class="space-y-3">
-                <h3 class="font-bold text-xs text-[#A7A7A7] uppercase tracking-wider px-1">Популярные категории</h3>
-                <div class="grid grid-cols-2 gap-2.5">
-                    <div onclick="quickSearch('Хип-хоп')" class="h-20 rounded-2xl p-3 bg-gradient-to-br from-red-600 to-rose-900 relative overflow-hidden cursor-pointer active:scale-95 transition">
-                        <span class="font-extrabold text-sm block">Хип-хоп & Рэп</span>
-                        <svg class="w-8 h-8 absolute -bottom-1 -right-1 text-white/30 stroke-current" fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
-                    </div>
-                    <div onclick="quickSearch('Phonk')" class="h-20 rounded-2xl p-3 bg-gradient-to-br from-purple-700 to-indigo-900 relative overflow-hidden cursor-pointer active:scale-95 transition">
-                        <span class="font-extrabold text-sm block">Phonk & Drift</span>
-                        <svg class="w-8 h-8 absolute -bottom-1 -right-1 text-white/30 fill-current" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"/></svg>
-                    </div>
-                    <div onclick="quickSearch('Slowed')" class="h-20 rounded-2xl p-3 bg-gradient-to-br from-cyan-600 to-blue-900 relative overflow-hidden cursor-pointer active:scale-95 transition">
-                        <span class="font-extrabold text-sm block">Slowed + Reverb</span>
-                        <svg class="w-8 h-8 absolute -bottom-1 -right-1 text-white/30 stroke-current" fill="none" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                    </div>
-                    <div onclick="quickSearch('Deep House')" class="h-20 rounded-2xl p-3 bg-gradient-to-br from-emerald-600 to-teal-900 relative overflow-hidden cursor-pointer active:scale-95 transition">
-                        <span class="font-extrabold text-sm block">Club & House</span>
-                        <svg class="w-8 h-8 absolute -bottom-1 -right-1 text-white/30 stroke-current" fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Search Results List -->
-            <div id="search-results-list" class="space-y-2 pt-1">
-                <!-- Tracks loaded live via real API -->
-            </div>
-
-        </section>
-
-        <!-- ================= SECTION 3: LIBRARY ================= -->
-        <section id="tab-library" class="hidden space-y-4">
-            <div class="flex items-center justify-between">
-                <h2 class="text-2xl font-black text-white tracking-tight">Твоя медиатека</h2>
-                <span id="lib-total-badge" class="text-xs font-semibold px-2.5 py-1 rounded-full glass-pill text-[#A7A7A7]">0 треков</span>
-            </div>
-
-            <div class="flex space-x-2 text-xs font-bold">
-                <button onclick="setLibSubTab('favs')" id="lib-btn-favs" class="px-4 py-2 rounded-full spotify-green text-black shadow-md transition">Любимые</button>
-                <button onclick="setLibSubTab('history')" id="lib-btn-history" class="px-4 py-2 rounded-full glass-card text-[#A7A7A7] hover:text-white transition">Скачанное</button>
-            </div>
-
-            <div id="library-list" class="space-y-2">
-                <!-- Library items rendered here -->
-            </div>
-        </section>
-
-        <!-- ================= SECTION 4: PROFILE ================= -->
-        <section id="tab-profile" class="hidden space-y-4">
-            <h2 class="text-2xl font-black text-white tracking-tight">Профиль</h2>
-
-            <div class="glass-card rounded-3xl p-5 space-y-4">
-                <div class="flex items-center space-x-4">
-                    <div id="profile-avatar" class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#1DB954] to-teal-400 text-black font-black flex items-center justify-center text-2xl shadow-xl shadow-[#1DB954]/20">
-                        U
-                    </div>
-                    <div>
-                        <h3 id="profile-user-name" class="font-black text-lg text-white">Слушатель</h3>
-                        <p id="profile-tg-id" class="text-xs text-[#A7A7A7]">Telegram ID: —</p>
-                    </div>
-                </div>
-
-                <div class="border-t border-white/10 pt-3 space-y-2.5 text-xs">
-                    <div class="flex justify-between items-center">
-                        <span class="text-[#A7A7A7]">Интеграция</span>
-                        <span class="font-bold text-[#1DB954]">Telegram Bot API Connected</span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-[#A7A7A7]">Поиск цензуры</span>
-                        <span class="font-bold text-white">Live AI Heuristic + SQLite</span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-[#A7A7A7]">Выделенный кэш</span>
-                        <span class="font-bold text-white">Мгновенная пересылка</span>
-                    </div>
-                </div>
-
-                <button onclick="clearAppCache()" class="w-full py-3 rounded-2xl glass-card text-xs font-bold text-rose-400 hover:text-rose-300 active:scale-95 transition">
-                    Очистить локальный кэш треков
-                </button>
-            </div>
-        </section>
-
-    </main>
-
-    <!-- Spotify Floating Glass Mini Player -->
-    <div id="mini-player" class="fixed bottom-20 left-3 right-3 max-w-md mx-auto glass-player rounded-2xl p-2.5 flex items-center justify-between border border-white/15 z-40 hidden cursor-pointer transition active:scale-[0.99]" onclick="openFullPlayer()">
-        <div class="flex items-center space-x-3 overflow-hidden pr-2">
-            <img id="mini-cover" src="" class="w-11 h-11 rounded-xl object-cover shadow-md bg-zinc-800 flex-shrink-0">
-            <div class="truncate">
-                <div id="mini-title" class="font-bold text-[13px] text-white truncate leading-tight">Название трека</div>
-                <div id="mini-artist" class="text-xs text-[#A7A7A7] truncate mt-0.5">Исполнитель</div>
-            </div>
+    <!-- ══ PROFILE ══ -->
+    <div id="screen-prof" class="screen px-4 pb-4 gap-0">
+      <div class="mt-6 flex flex-col items-center gap-3 mb-6">
+        <div id="big-avatar" class="w-20 h-20 rounded-full flex items-center justify-center text-3xl font-black text-black" style="background:linear-gradient(135deg,#1DB954,#38ef7d);">N</div>
+        <div class="text-center">
+          <div id="prof-name" class="font-black text-xl">Слушатель</div>
+          <div id="prof-id" class="text-xs opacity-40 mt-0.5">Telegram WebApp</div>
         </div>
-        <div class="flex items-center space-x-2 pl-2" onclick="event.stopPropagation()">
-            <button onclick="toggleLikeCurrent()" id="mini-like-btn" class="w-9 h-9 rounded-full flex items-center justify-center text-[#A7A7A7] hover:text-[#1DB954] active:scale-125 transition">
-                <svg id="mini-like-icon" class="w-5 h-5 fill-none stroke-current" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
-            </button>
-            <button onclick="toggleAudio()" id="mini-play-btn" class="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center active:scale-90 transition shadow-lg flex-shrink-0">
-                <svg id="mini-icon-play" class="w-4 h-4 fill-black ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                <svg id="mini-icon-pause" class="w-4 h-4 fill-black hidden" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg>
-            </button>
+      </div>
+      <div class="flex flex-col gap-3">
+        <div class="glass-card rounded-2xl p-4 flex items-center justify-between">
+          <span class="text-sm font-semibold">Избранных треков</span>
+          <span id="fav-count" class="text-sm font-black accent-text">0</span>
         </div>
+        <div class="glass-card rounded-2xl p-4 flex items-center justify-between">
+          <span class="text-sm font-semibold">Прослушано</span>
+          <span id="hist-count" class="text-sm font-black accent-text">0</span>
+        </div>
+        <button onclick="clearCache()" class="glass-card rounded-2xl p-4 flex items-center justify-between w-full active:opacity-70">
+          <span class="text-sm font-semibold">Очистить кэш</span>
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" class="opacity-40"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        </button>
+        <div class="glass-card rounded-2xl p-4 text-center text-xs opacity-30 font-semibold">NoMusic WebApp v3.0 • Made with ♥</div>
+      </div>
     </div>
 
-    <!-- Spotify Fullscreen Player Modal -->
-    <div id="full-player-modal" class="fixed inset-0 z-50 bg-[#121212]/95 backdrop-blur-3xl transform translate-y-full transition-transform duration-300 ease-out flex flex-col justify-between p-6">
-        <!-- Top bar: Down chevron and header info -->
-        <div class="flex items-center justify-between pt-2">
-            <button onclick="closeFullPlayer()" class="w-9 h-9 rounded-full glass-card flex items-center justify-center text-sm active:scale-90 transition">
-                <svg class="w-5 h-5 stroke-current" fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
-            </button>
-            <div class="text-center">
-                <span class="text-[10px] uppercase font-bold tracking-widest text-[#A7A7A7] block">Играет из каталога</span>
-                <span id="full-source-badge" class="text-xs font-bold text-white">NoMusic Stream</span>
-            </div>
-            <button onclick="sendCurrentTrackToTelegram()" title="Скачать в Telegram" class="w-9 h-9 rounded-full glass-card flex items-center justify-center text-xs active:scale-90 transition text-emerald-400">
-                <svg class="w-4 h-4 fill-none stroke-current" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4m-7 8h10"/></svg>
-            </button>
-        </div>
+  </div><!-- /screens -->
 
-        <!-- Big Album Artwork with Ambient Glow -->
-        <div class="flex justify-center my-auto py-2 relative">
-            <div id="full-glow" class="absolute w-56 h-56 rounded-full bg-[#1DB954]/25 blur-3xl pointer-events-none"></div>
-            <img id="full-cover" src="" class="relative z-10 w-64 h-64 sm:w-72 sm:h-72 object-cover rounded-3xl shadow-2xl border border-white/10 bg-zinc-900">
-        </div>
+  <!-- ── MINI PLAYER ── -->
+  <div id="mini-player" onclick="openPlayer()" class="glass-dark mx-3 mb-1 rounded-2xl px-3 py-2.5 flex items-center gap-3 cursor-pointer flex-shrink-0" style="display:none;">
+    <div class="relative flex-shrink-0">
+      <img id="mini-cover" src="" class="w-10 h-10 rounded-xl object-cover bg-zinc-800">
+      <div id="mini-eq" class="absolute inset-0 flex items-center justify-center gap-0.5 bg-black/40 rounded-xl" style="display:none!important;">
+        <span class="eq-bar" style="height:6px"></span>
+        <span class="eq-bar" style="height:12px"></span>
+        <span class="eq-bar" style="height:8px"></span>
+      </div>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div id="mini-title" class="text-sm font-bold truncate"></div>
+      <div id="mini-artist" class="text-xs opacity-50 truncate font-medium mt-0.5"></div>
+    </div>
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <button onclick="event.stopPropagation(); togglePlay()" class="w-8 h-8 rounded-full flex items-center justify-center" style="background:rgba(255,255,255,.1)">
+        <svg id="mini-play-icon" width="14" height="14" fill="white" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button onclick="event.stopPropagation(); sendToTelegram()" class="w-8 h-8 rounded-full flex items-center justify-center" style="background:rgba(29,185,84,.15)" title="Скачать">
+        <svg width="14" height="14" fill="none" stroke="#1DB954" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4m-7 8h10"/></svg>
+      </button>
+    </div>
+    <!-- mini progress -->
+    <div class="absolute bottom-0 left-3 right-3 h-0.5 rounded-full overflow-hidden" style="background:rgba(255,255,255,.08)">
+      <div id="mini-progress" class="h-full rounded-full transition-all duration-200" style="background:#1DB954;width:0%"></div>
+    </div>
+  </div>
 
-        <!-- Controls Container -->
-        <div class="space-y-4 pb-4">
-            <div class="flex items-center justify-between">
-                <div class="truncate pr-3">
-                    <h2 id="full-title" class="text-xl font-black text-white truncate leading-tight">Название трека</h2>
-                    <p id="full-artist" class="text-sm text-[#A7A7A7] font-medium truncate mt-1">Исполнитель</p>
-                </div>
-                <button onclick="toggleLikeCurrent()" class="w-10 h-10 rounded-full flex items-center justify-center active:scale-125 transition text-[#A7A7A7]">
-                    <svg id="full-like-icon" class="w-6 h-6 fill-none stroke-current" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
-                </button>
-            </div>
+  <!-- ── BOTTOM NAV ── -->
+  <nav id="bottom-nav" class="flex items-center justify-around px-2 pt-2 pb-3 flex-shrink-0" style="padding-bottom: max(12px, env(safe-area-inset-bottom));">
+    <button class="tab-btn active flex flex-col items-center gap-1" onclick="switchTab('home',this)">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l9-9 9 9M5 10v9a1 1 0 001 1h4v-5h4v5h4a1 1 0 001-1v-9"/></svg>
+      <span class="text-xs font-semibold leading-none">Главная</span>
+    </button>
+    <button class="tab-btn flex flex-col items-center gap-1 opacity-50" onclick="switchTab('lib',this)">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+      <span class="text-xs font-semibold leading-none">Моя музыка</span>
+    </button>
+    <button class="tab-btn flex flex-col items-center gap-1 opacity-50" onclick="switchTab('prof',this)">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path stroke-linecap="round" d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      <span class="text-xs font-semibold leading-none">Профиль</span>
+    </button>
+  </nav>
+</div><!-- /app -->
 
-            <!-- Progress Bar -->
-            <div class="space-y-1">
-                <input type="range" id="seek-bar" min="0" max="100" value="0" class="w-full" oninput="onSeek(this.value)">
-                <div class="flex justify-between text-[11px] text-[#A7A7A7] font-medium">
-                    <span id="time-current">0:00</span>
-                    <span id="time-total">0:30</span>
-                </div>
-            </div>
 
-            <!-- Spotify Transport Buttons -->
-            <div class="flex items-center justify-between px-2 pt-1">
-                <button onclick="toggleShuffle()" id="shuffle-btn" class="text-[#A7A7A7] hover:text-white active:scale-75 transition">
-                    <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
-                </button>
-                <button onclick="playPrev()" class="text-white active:scale-75 transition">
-                    <svg class="w-8 h-8 fill-current" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
-                </button>
-                <button onclick="toggleAudio()" class="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-xl active:scale-90 transition">
-                    <svg id="full-icon-play" class="w-7 h-7 fill-black ml-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                    <svg id="full-icon-pause" class="w-7 h-7 fill-black hidden" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg>
-                </button>
-                <button onclick="playNext()" class="text-white active:scale-75 transition">
-                    <svg class="w-8 h-8 fill-current" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
-                </button>
-                <button onclick="toggleRepeat()" id="repeat-btn" class="text-[#A7A7A7] hover:text-white active:scale-75 transition">
-                    <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
-                </button>
-            </div>
+<!-- ══════════════════════════════════════════
+     FULL PLAYER SHEET
+══════════════════════════════════════════ -->
+<div id="player-sheet">
+  <!-- drag handle -->
+  <div class="flex-shrink-0 pt-3 pb-2 flex flex-col items-center gap-1" onclick="closePlayer()">
+    <div class="drag-handle"></div>
+  </div>
 
-            <!-- Download into Telegram Chat Button -->
-            <button onclick="sendCurrentTrackToTelegram()" class="w-full py-3.5 rounded-2xl spotify-green text-black font-extrabold text-xs shadow-lg shadow-[#1DB954]/25 flex items-center justify-center space-x-2 active:scale-95 transition">
-                <svg class="w-4 h-4 fill-black" viewBox="0 0 24 24"><path d="M12 16l4-5h-3V4h-2v7H8l4 5zm9 4H3v-2h18v2z"/></svg>
-                <span>Скачать трек в Telegram (320 kbps)</span>
-            </button>
-        </div>
+  <!-- ambient background art -->
+  <div class="absolute inset-0 overflow-hidden pointer-events-none" style="z-index:-1;">
+    <img id="player-art-bg" src="" class="art-glow absolute -top-1/4 left-1/2 -translate-x-1/2 w-3/4 aspect-square">
+    <div class="absolute inset-0" style="background:linear-gradient(to bottom, rgba(10,10,15,.3) 0%, #0a0a0f 70%)"></div>
+  </div>
+
+  <!-- top bar -->
+  <div class="flex items-center justify-between px-5 pb-2 flex-shrink-0">
+    <button onclick="closePlayer()" class="w-9 h-9 rounded-full flex items-center justify-center glass">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+    <div class="text-center">
+      <div class="text-xs font-bold opacity-40 uppercase tracking-widest">Воспроизведение</div>
+    </div>
+    <button id="player-fav-btn" class="fav-btn w-9 h-9 rounded-full flex items-center justify-center glass" onclick="toggleFav()">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+    </button>
+  </div>
+
+  <!-- album art -->
+  <div class="flex-1 flex flex-col justify-between px-6 overflow-hidden">
+    <div class="flex items-center justify-center" style="padding: 8px 0 12px;">
+      <div id="player-art-wrap" class="rounded-3xl overflow-hidden shadow-2xl w-full aspect-square" style="max-width: min(72vw, 300px); max-height: min(72vw, 300px); transition: transform .3s cubic-bezier(.34,1.56,.64,1);">
+        <img id="player-cover" src="" class="w-full h-full object-cover bg-zinc-800">
+      </div>
     </div>
 
-    <!-- Bottom Glass Navigation Bar (Spotify Style) -->
-    <nav class="fixed bottom-0 left-0 right-0 glass-nav z-30 py-3 px-6">
-        <div class="max-w-md mx-auto flex justify-between items-center">
-            <button onclick="switchTab('home')" class="nav-btn flex flex-col items-center text-[#1DB954]" data-tab="home">
-                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12.5 3.247a1 1 0 0 0-1 0L4 7.577V20h4.5v-6a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v6H20V7.577l-7.5-4.33z"/></svg>
-                <span class="text-[10px] font-bold mt-1">Главная</span>
-            </button>
-            <button onclick="switchTab('search')" class="nav-btn flex flex-col items-center text-[#A7A7A7]" data-tab="search">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                <span class="text-[10px] font-bold mt-1">Поиск</span>
-            </button>
-            <button onclick="switchTab('library')" class="nav-btn flex flex-col items-center text-[#A7A7A7]" data-tab="library">
-                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M3 22a1 1 0 0 1-1-1V3a1 1 0 0 1 2 0v18a1 1 0 0 1-1 1zM15.5 2.1a1 1 0 0 0-1.2.7l-4 14a1 1 0 0 0 .7 1.2 1 1 0 0 0 1.2-.7l4-14a1 1 0 0 0-.7-1.2zM21 4a1 1 0 0 0-1 1v14a1 1 0 0 0 2 0V5a1 1 0 0 0-1-1z"/></svg>
-                <span class="text-[10px] font-bold mt-1">Медиатека</span>
-            </button>
-            <button onclick="switchTab('profile')" class="nav-btn flex flex-col items-center text-[#A7A7A7]" data-tab="profile">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
-                <span class="text-[10px] font-bold mt-1">Кабинет</span>
-            </button>
+    <!-- track info -->
+    <div class="flex items-start justify-between gap-3 mb-3">
+      <div class="flex-1 min-w-0">
+        <div id="player-title" class="font-black text-xl leading-tight truncate">—</div>
+        <div id="player-artist" class="text-sm opacity-50 font-semibold mt-1 truncate">—</div>
+      </div>
+      <button onclick="sendToTelegram()" class="flex-shrink-0 rounded-2xl px-3.5 py-2 text-xs font-black flex items-center gap-1.5" style="background:rgba(29,185,84,.15); color:#1DB954; border: 1px solid rgba(29,185,84,.25);">
+        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4m-7 8h10"/></svg>
+        Скачать
+      </button>
+    </div>
+
+    <!-- progress bar -->
+    <div class="mb-1">
+      <input id="seek-bar" type="range" min="0" max="100" value="0" class="w-full" oninput="onSeek(this.value)" onchange="onSeekEnd(this.value)" style="height:3px;">
+      <div class="flex justify-between text-xs opacity-40 font-mono font-semibold mt-1.5">
+        <span id="time-cur">0:00</span>
+        <span id="time-total">—</span>
+      </div>
+    </div>
+
+    <!-- controls -->
+    <div class="flex items-center justify-between mb-3">
+      <button id="shuffle-btn" class="w-10 h-10 flex items-center justify-center rounded-full opacity-40 transition" onclick="toggleShuffle()">
+        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
+      </button>
+      <button onclick="playPrev()" class="w-12 h-12 flex items-center justify-center rounded-full glass">
+        <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+      </button>
+      <button id="play-btn" onclick="togglePlay()" class="w-16 h-16 rounded-full flex items-center justify-center shadow-lg" style="background:#1DB954; box-shadow: 0 0 30px rgba(29,185,84,.4);">
+        <svg id="play-icon" width="26" height="26" fill="#000" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button onclick="playNext()" class="w-12 h-12 flex items-center justify-center rounded-full glass">
+        <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+      </button>
+      <button id="repeat-btn" class="w-10 h-10 flex items-center justify-center rounded-full opacity-40 transition" onclick="toggleRepeat()">
+        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+      </button>
+    </div>
+
+    <!-- volume -->
+    <div class="flex items-center gap-3 pb-4">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="opacity-30 flex-shrink-0" viewBox="0 0 24 24"><path stroke-linecap="round" d="M11 5L6 9H2v6h4l5 4V5z"/></svg>
+      <input id="vol-slider" type="range" min="0" max="100" value="80" class="flex-1" oninput="setVolume(this.value)" style="height:3px;">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="opacity-30 flex-shrink-0" viewBox="0 0 24 24"><path stroke-linecap="round" d="M11 5L6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14"/></svg>
+    </div>
+
+    <!-- source badge -->
+    <div class="pb-4 flex justify-center">
+      <span id="player-source" class="glass text-xs font-bold rounded-full px-3 py-1.5 opacity-50">Официальный источник</span>
+    </div>
+  </div>
+
+  <!-- hidden audio -->
+  <audio id="audio" preload="none"></audio>
+</div>
+
+
+<!-- ── TOAST ── -->
+<div id="toast"></div>
+
+
+<script>
+  // ══════════════════════════════════════════
+  //  STATE
+  // ══════════════════════════════════════════
+  const tg = window.Telegram?.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  let currentTrack = null;
+  let queue = [];
+  let queueIdx = 0;
+  let isPlaying = false;
+  let shuffle = false;
+  let repeat = false;
+  let activeMode = 'official';
+  let activeTab = 'home';
+  let libTab = 'favs';
+  let favorites = JSON.parse(localStorage.getItem('nm_favs') || '[]');
+  let history   = JSON.parse(localStorage.getItem('nm_hist') || '[]');
+  let searchTimer = null;
+  let playerOpen = false;
+
+  // ══════════════════════════════════════════
+  //  TELEGRAM INIT
+  // ══════════════════════════════════════════
+  (function initUser() {
+    const user = tg?.initDataUnsafe?.user;
+    const firstName = (user?.first_name || '').trim();
+    const displayName = (!firstName || firstName === 'none' || firstName === 'null') ? 'Слушатель' : firstName;
+    const initial = displayName[0].toUpperCase();
+    const id = user?.id ? `ID: ${user.id}` : 'Telegram WebApp Guest';
+
+    document.getElementById('username').textContent = displayName;
+    document.getElementById('prof-name').textContent = displayName;
+    document.getElementById('prof-id').textContent = id;
+    document.getElementById('avatar').textContent = initial;
+    document.getElementById('big-avatar').textContent = initial;
+
+    const h = new Date().getHours();
+    const greeting = h < 6 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 17 ? 'Добрый день' : h < 22 ? 'Добрый вечер' : 'Доброй ночи';
+    document.getElementById('greeting').textContent = greeting;
+  })();
+
+  // ══════════════════════════════════════════
+  //  NAVIGATION
+  // ══════════════════════════════════════════
+  function switchTab(id, btn) {
+    haptic('selection');
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById('screen-' + id).classList.add('active');
+    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('opacity-50'); });
+    if (btn) { btn.classList.add('active'); btn.classList.remove('opacity-50'); }
+    activeTab = id;
+    if (id === 'lib') renderLib();
+    if (id === 'prof') updateProfileCounts();
+  }
+
+  // ══════════════════════════════════════════
+  //  SEARCH
+  // ══════════════════════════════════════════
+  let lastQuery = '';
+  function onSearchInput(val) {
+    document.getElementById('search-clear').style.opacity = val ? '1' : '0';
+    clearTimeout(searchTimer);
+    if (!val.trim()) { loadTrending(); return; }
+    searchTimer = setTimeout(() => doSearch(val.trim()), 400);
+  }
+
+  function clearSearch() {
+    const inp = document.getElementById('search-input');
+    inp.value = '';
+    document.getElementById('search-clear').style.opacity = '0';
+    loadTrending();
+  }
+
+  function setChip(el, mode) {
+    haptic('selection');
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active-chip'));
+    el.classList.add('active-chip');
+    activeMode = mode;
+    const q = document.getElementById('search-input').value.trim();
+    if (q) doSearch(q); else loadTrending();
+  }
+
+  async function doSearch(q) {
+    if (!q) return;
+    lastQuery = q;
+    showSkeletons();
+    try {
+      const resp = await fetch(`/api/search?q=${encodeURIComponent(q)}&mode=${activeMode}&limit=20`);
+      if (!resp.ok) throw new Error('API error');
+      const data = await resp.json();
+      const tracks = data.results || [];
+      queue = tracks;
+      renderTrackList(tracks, `Результаты: «${escH(q)}»`);
+    } catch (e) {
+      renderError('Не удалось загрузить результаты. Проверьте соединение.');
+    }
+  }
+
+  async function loadTrending() {
+    showSkeletons();
+    try {
+      const resp = await fetch(`/api/search?q=${encodeURIComponent('хит')}&mode=official&limit=20`);
+      if (!resp.ok) throw new Error();
+      const data = await resp.json();
+      const tracks = data.results || [];
+      queue = tracks;
+      renderTrackList(tracks, 'В тренде');
+    } catch (e) {
+      // Fallback demo data
+      const demo = getDemoTracks();
+      queue = demo;
+      renderTrackList(demo, 'В тренде');
+    }
+  }
+
+  function showSkeletons() {
+    const list = document.getElementById('track-list');
+    list.innerHTML = Array.from({length: 6}, () => `
+      <div class="flex items-center gap-3 p-2">
+        <div class="skeleton w-12 h-12 rounded-xl flex-shrink-0"></div>
+        <div class="flex-1 flex flex-col gap-2">
+          <div class="skeleton h-3 rounded-md w-3/4"></div>
+          <div class="skeleton h-3 rounded-md w-1/2"></div>
         </div>
-    </nav>
+      </div>`).join('');
+    document.querySelector('#home-content h2') && (document.querySelector('#home-content h2').textContent = '...');
+  }
 
-    <audio id="audio" preload="none"></audio>
+  function renderError(msg) {
+    document.getElementById('track-list').innerHTML = `
+      <div class="py-12 text-center text-sm opacity-40 font-semibold">${escH(msg)}</div>`;
+  }
 
-    <script>
-        // --- Telegram WebApp Initialization ---
-        const tg = window.Telegram?.WebApp;
-        if (tg) {
-            tg.ready();
-            tg.expand();
-            tg.setHeaderColor('#121212');
-            tg.setBackgroundColor('#121212');
-        }
+  function renderTrackList(tracks, headerText = '') {
+    const header = document.querySelector('#home-content h2');
+    if (header) header.innerHTML = escH(headerText);
+    const list = document.getElementById('track-list');
+    if (!tracks.length) { list.innerHTML = '<div class="py-12 text-center text-sm opacity-40 font-semibold">Ничего не найдено</div>'; return; }
+    list.innerHTML = tracks.map((t, i) => `
+      <div onclick="playAt(${i})" class="glass-card rounded-2xl p-2.5 flex items-center gap-3 cursor-pointer group">
+        <span class="text-xs font-bold opacity-30 w-5 text-center flex-shrink-0">${i+1}</span>
+        <div class="relative w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-zinc-800 shadow-md">
+          <img src="${escH(t.cover)}" class="w-full h-full object-cover" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2248%22 height=%2248%22><rect width=%2248%22 height=%2248%22 fill=%22%23222%22/></svg>'">
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-bold truncate leading-tight text-white group-hover:text-green-400 transition-colors">
+            ${escH(t.title)}${t.is_censored ? ' <span class="text-xs font-semibold opacity-60 bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 px-1.5 py-px rounded">Clean</span>' : ''}
+          </div>
+          <div class="text-xs opacity-50 truncate font-medium mt-0.5">${escH(t.artist)}</div>
+        </div>
+        <div class="flex items-center gap-1.5 flex-shrink-0">
+          <button onclick="event.stopPropagation(); downloadTrack(${i})" class="w-8 h-8 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity" style="background:rgba(29,185,84,.15); color:#1DB954;" title="Скачать">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4m-7 8h10"/></svg>
+          </button>
+          <div class="w-7 h-7 rounded-full flex items-center justify-center" style="background:rgba(255,255,255,.08);">
+            <svg width="11" height="11" fill="white" viewBox="0 0 24 24" class="translate-x-px"><path d="M8 5v14l11-7z"/></svg>
+          </div>
+        </div>
+      </div>`).join('');
+  }
 
-        const rawUser = tg?.initDataUnsafe?.user;
-        let userName = rawUser?.first_name || '';
-        if (!userName || userName.toLowerCase() === 'none' || userName.toLowerCase() === 'null') {
-            userName = 'Слушатель';
-        }
-        const userLastName = rawUser?.last_name || '';
-        const userId = rawUser?.id || 0;
+  // ══════════════════════════════════════════
+  //  PLAYER
+  // ══════════════════════════════════════════
+  const audio = document.getElementById('audio');
 
-        document.getElementById('user-display-name').innerText = userName;
-        document.getElementById('profile-user-name').innerText = `${userName} ${userLastName}`.trim();
-        document.getElementById('profile-tg-id').innerText = userId ? `Telegram ID: ${userId}` : 'Telegram WebApp Guest';
+  function playAt(idx) {
+    haptic('medium');
+    if (!queue.length) return;
+    queueIdx = idx;
+    currentTrack = queue[queueIdx];
+    loadTrack(currentTrack);
+    openPlayer();
+    addToHistory(currentTrack);
+  }
 
-        const initialChar = userName.charAt(0).toUpperCase();
-        document.getElementById('user-avatar').innerText = initialChar;
-        document.getElementById('profile-avatar').innerText = initialChar;
+  function loadTrack(t) {
+    currentTrack = t;
+    // Update player UI
+    document.getElementById('player-title').textContent  = t.title  || '—';
+    document.getElementById('player-artist').textContent = t.artist || '—';
+    document.getElementById('player-cover').src = t.cover || '';
+    document.getElementById('player-art-bg').src = t.cover || '';
+    document.getElementById('player-source').textContent = t.source === 'soundcloud' ? '☁ SoundCloud' : '✦ Официальный источник';
+    document.getElementById('mini-title').textContent  = t.title  || '—';
+    document.getElementById('mini-artist').textContent = t.artist || '—';
+    document.getElementById('mini-cover').src = t.cover || '';
 
-        // Dynamic time greeting
-        const hour = new Date().getHours();
-        const greeting = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
-        document.getElementById('greeting-label').innerText = greeting;
+    // Update fav button
+    const isFav = favorites.some(f => f.id === t.id);
+    const favBtn = document.getElementById('player-fav-btn');
+    isFav ? favBtn.classList.add('liked') : favBtn.classList.remove('liked');
 
-        function haptic(type = 'light') {
-            if (tg?.HapticFeedback) {
-                if (type === 'light') tg.HapticFeedback.impactOccurred('light');
-                else if (type === 'medium') tg.HapticFeedback.impactOccurred('medium');
-                else if (type === 'selection') tg.HapticFeedback.selectionChanged();
-                else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
-            }
-        }
+    // Load audio
+    const audioUrl = t.preview_url || t.url || '';
+    if (audioUrl && audioUrl.startsWith('http') && !audioUrl.startsWith('am://')) {
+      audio.src = audioUrl;
+      audio.volume = document.getElementById('vol-slider').value / 100;
+      audio.play().catch(() => {});
+    } else {
+      audio.src = '';
+    }
 
-        function showToast(text) {
-            const toast = document.getElementById('toast');
-            document.getElementById('toast-text').innerText = text;
-            toast.classList.remove('-translate-y-24', 'opacity-0');
-            setTimeout(() => toast.classList.add('-translate-y-24', 'opacity-0'), 2200);
-        }
+    // Show mini player
+    const mp = document.getElementById('mini-player');
+    mp.style.display = 'flex';
+    mp.style.position = 'relative';
+    updatePlayState(true);
+  }
 
-        // --- Demo Trending Catalog for Home Feed ---
-        const DEMO_TRENDS = [
-            {
-                id: 'am_112632320',
-                title: 'ASPHALT 8',
-                artist: 'MACAN',
-                cover: 'https://avatars.yandex.net/get-music-content/9852239/64923f66.a.27641245-1/400x400',
-                duration: 172,
-                preview: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview126/v4/a4/09/b8/a409b83b-cbbf-2234-fc56-8a03ce8fa6ec/mzaf_10437435163914582697.plus.aac.p.m4a',
-                is_censored: false,
-                source: 'official'
-            },
-            {
-                id: 'am_148494668',
-                title: 'DISS MAFANYA, ANAR, ДИПИНС',
-                artist: 'НОКТУ',
-                cover: 'https://avatars.yandex.net/get-music-content/11411175/7f8fbfd1.a.33230891-1/400x400',
-                duration: 154,
-                preview: '',
-                is_censored: true,
-                source: 'official'
-            },
-            {
-                id: 'am_39179635',
-                title: 'Батя в здании',
-                artist: 'MC Хованский',
-                cover: 'https://avatars.yandex.net/get-music-content/38044/5e2bc37b.a.4173875-1/400x400',
-                duration: 198,
-                preview: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/7e/c5/42/7ec54286-dd07-8e68-07f0-2f3479cf1fe5/mzaf_16487192661858169601.plus.aac.p.m4a',
-                is_censored: false,
-                source: 'official'
-            },
-            {
-                id: 'am_oxxy_krasota',
-                title: 'Красота и Уродство',
-                artist: 'Oxxxymiron',
-                cover: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/3d/8c/fb/3d8cfba6-a193-ea40-3a5e-1ba6ee81fbda/cover.jpg/400x400bb.jpg',
-                duration: 165,
-                preview: '',
-                is_censored: false,
-                source: 'official'
-            },
-            {
-                id: 'sc_drift_phonk',
-                title: 'METAMORPHOSIS (Sped Up)',
-                artist: 'INTERWORLD',
-                cover: 'https://i1.sndcdn.com/artworks-99dK8kX2H6qP-0-t500x500.jpg',
-                duration: 140,
-                preview: '',
-                is_censored: false,
-                source: 'soundcloud'
-            }
-        ];
+  function updatePlayState(playing) {
+    isPlaying = playing;
+    const playIcon = document.getElementById('play-icon');
+    const miniPlayIcon = document.getElementById('mini-play-icon');
+    const miniEq = document.getElementById('mini-eq');
 
-        const ARTISTS = [
-            { name: 'Oxxxymiron', cover: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/3d/8c/fb/3d8cfba6-a193-ea40-3a5e-1ba6ee81fbda/cover.jpg/300x300bb.jpg' },
-            { name: 'MACAN', cover: 'https://avatars.yandex.net/get-music-content/9852239/64923f66.a.27641245-1/200x200' },
-            { name: 'Miyagi & Эндшпиль', cover: 'https://avatars.yandex.net/get-music-content/4405977/6ba5441a.a.15017290-1/200x200' },
-            { name: 'MC Хованский', cover: 'https://avatars.yandex.net/get-music-content/38044/5e2bc37b.a.4173875-1/200x200' },
-            { name: 'Friendly Thug', cover: 'https://avatars.yandex.net/get-music-content/63210/4b30e060.a.24949514-1/200x200' }
-        ];
+    if (playing) {
+      playIcon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+      miniPlayIcon.innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+      miniEq.style.display = 'flex';
+    } else {
+      playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+      miniPlayIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+      miniEq.style.display = 'none';
+    }
+  }
 
-        let favorites = JSON.parse(localStorage.getItem('nm_favorites') || '[]');
-        let history = JSON.parse(localStorage.getItem('nm_history') || '[]');
-        let currentTrack = null;
-        let isPlaying = false;
-        let activeSearchMode = 'official';
-        let currentLibTab = 'favs';
+  function togglePlay() {
+    haptic('light');
+    if (!currentTrack) return;
+    if (audio.src && !audio.src.endsWith('am://') && audio.src !== window.location.href) {
+      if (audio.paused) { audio.play().catch(()=>{}); updatePlayState(true); }
+      else { audio.pause(); updatePlayState(false); }
+    } else {
+      // no streamable audio — just toggle UI state
+      updatePlayState(!isPlaying);
+      if (isPlaying) showToast('Стриминг недоступен — нажми «Скачать»');
+    }
+  }
 
-        const audio = document.getElementById('audio');
+  function playNext() {
+    haptic('light');
+    if (!queue.length) return;
+    if (shuffle) { queueIdx = Math.floor(Math.random() * queue.length); }
+    else { queueIdx = (queueIdx + 1) % queue.length; }
+    loadTrack(queue[queueIdx]);
+    addToHistory(queue[queueIdx]);
+  }
 
-        audio.ontimeupdate = () => {
-            if (!audio.duration) return;
-            const cur = audio.currentTime;
-            const dur = audio.duration;
-            document.getElementById('seek-bar').value = (cur / dur) * 100;
-            document.getElementById('time-current').innerText = formatTime(cur);
-            document.getElementById('time-total').innerText = formatTime(dur);
-        };
+  function playPrev() {
+    haptic('light');
+    if (!queue.length) return;
+    queueIdx = (queueIdx - 1 + queue.length) % queue.length;
+    loadTrack(queue[queueIdx]);
+  }
 
-        audio.onended = () => {
-            playNext();
-        };
+  function toggleShuffle() {
+    haptic('selection');
+    shuffle = !shuffle;
+    document.getElementById('shuffle-btn').classList.toggle('opacity-40', !shuffle);
+    document.getElementById('shuffle-btn').classList.toggle('accent-text', shuffle);
+    showToast(shuffle ? 'Перемешивание вкл.' : 'Перемешивание выкл.');
+  }
 
-        function formatTime(sec) {
-            const m = Math.floor(sec / 60);
-            const s = Math.floor(sec % 60);
-            return `${m}:${s < 10 ? '0' : ''}${s}`;
-        }
+  function toggleRepeat() {
+    haptic('selection');
+    repeat = !repeat;
+    audio.loop = repeat;
+    document.getElementById('repeat-btn').classList.toggle('opacity-40', !repeat);
+    document.getElementById('repeat-btn').classList.toggle('accent-text', repeat);
+    showToast(repeat ? 'Повтор вкл.' : 'Повтор выкл.');
+  }
 
-        function escapeHtml(str) {
-            return String(str || '').replace(/[&<>"']/g, m => ({
-                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-            })[m]);
-        }
+  function setVolume(v) {
+    audio.volume = v / 100;
+  }
 
-        // --- Render Functions ---
-        function renderHome() {
-            document.getElementById('home-fav-count').innerText = `${favorites.length} треков`;
-            const carousel = document.getElementById('carousel-trending');
-            carousel.innerHTML = DEMO_TRENDS.map(t => `
-                <div onclick='playTrack(${JSON.stringify(t)})' class="glass-card rounded-2xl p-3 flex-shrink-0 w-36 cursor-pointer active:scale-95 transition group">
-                    <div class="relative w-30 h-30 rounded-xl overflow-hidden mb-2.5 shadow-md bg-zinc-800">
-                        <img src="${escapeHtml(t.cover)}" class="w-full h-full object-cover">
-                        <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                            <div class="w-9 h-9 rounded-full spotify-green flex items-center justify-center shadow-lg">
-                                <svg class="w-4 h-4 fill-black ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                            </div>
-                        </div>
-                        ${t.is_censored ? '<span class="absolute top-1.5 left-1.5 text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 rounded">Clean</span>' : ''}
-                    </div>
-                    <div class="font-bold text-[13px] text-white truncate leading-tight">${escapeHtml(t.title)}</div>
-                    <div class="text-xs text-[#A7A7A7] truncate font-medium mt-0.5">${escapeHtml(t.artist)}</div>
-                </div>
-            `).join('');
+  function onSeek(v) { /* preview */ }
+  function onSeekEnd(v) {
+    if (audio.duration) audio.currentTime = audio.duration * v / 100;
+  }
 
-            const artistsRow = document.getElementById('artists-row');
-            artistsRow.innerHTML = ARTISTS.map(a => `
-                <div onclick="quickSearch('${escapeHtml(a.name)}')" class="flex flex-col items-center flex-shrink-0 cursor-pointer active:scale-90 transition">
-                    <img src="${escapeHtml(a.cover)}" class="w-16 h-16 rounded-full object-cover shadow-lg border border-white/10 ring-2 ring-transparent hover:ring-[#1DB954]">
-                    <span class="text-xs font-semibold text-white mt-1.5 text-center max-w-[76px] truncate">${escapeHtml(a.name)}</span>
-                </div>
-            `).join('');
-        }
+  // Audio events
+  audio.addEventListener('timeupdate', () => {
+    if (!audio.duration) return;
+    const pct = (audio.currentTime / audio.duration) * 100;
+    document.getElementById('seek-bar').value = pct;
+    document.getElementById('mini-progress').style.width = pct + '%';
+    document.getElementById('time-cur').textContent = fmtTime(audio.currentTime);
+  });
+  audio.addEventListener('loadedmetadata', () => {
+    document.getElementById('time-total').textContent = fmtTime(audio.duration);
+  });
+  audio.addEventListener('ended', () => {
+    if (repeat) { audio.play(); return; }
+    playNext();
+  });
+  audio.addEventListener('play',  () => updatePlayState(true));
+  audio.addEventListener('pause', () => updatePlayState(false));
 
-        function playTrack(track) {
-            haptic('medium');
-            currentTrack = track;
-            
-            if (!history.find(x => x.id === track.id)) {
-                history.unshift(track);
-                if (history.length > 50) history.pop();
-                localStorage.setItem('nm_history', JSON.stringify(history));
-            }
+  function fmtTime(s) {
+    if (!s || isNaN(s)) return '0:00';
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  }
 
-            document.getElementById('mini-cover').src = track.cover;
-            document.getElementById('mini-title').innerText = track.title;
-            document.getElementById('mini-artist').innerText = track.artist;
-            document.getElementById('mini-player').classList.remove('hidden');
+  // ══════════════════════════════════════════
+  //  PLAYER SHEET
+  // ══════════════════════════════════════════
+  function openPlayer() {
+    if (!currentTrack) return;
+    playerOpen = true;
+    document.getElementById('player-sheet').classList.add('open');
+    // art bounce
+    setTimeout(() => {
+      const wrap = document.getElementById('player-art-wrap');
+      wrap.style.transform = 'scale(1.04)';
+      setTimeout(() => wrap.style.transform = 'scale(1)', 300);
+    }, 200);
+  }
 
-            document.getElementById('full-cover').src = track.cover;
-            document.getElementById('full-title').innerText = track.title;
-            document.getElementById('full-artist').innerText = track.artist;
-            document.getElementById('full-source-badge').innerText = track.source === 'soundcloud' ? 'SoundCloud' : 'Официальный релиз';
+  function closePlayer() {
+    playerOpen = false;
+    document.getElementById('player-sheet').classList.remove('open');
+  }
 
-            updateLikeIcons();
+  // swipe-down to close
+  let touchY0 = 0;
+  document.getElementById('player-sheet').addEventListener('touchstart', e => { touchY0 = e.touches[0].clientY; }, {passive:true});
+  document.getElementById('player-sheet').addEventListener('touchend', e => {
+    if (e.changedTouches[0].clientY - touchY0 > 80) closePlayer();
+  }, {passive:true});
 
-            if (track.preview) {
-                audio.src = track.preview;
-                audio.play().then(() => setPlayingState(true)).catch(() => setPlayingState(false));
-            } else {
-                setPlayingState(false);
-                showToast('Трек выбран. Нажми «Скачать в Telegram» для загрузки');
-            }
-        }
+  // ══════════════════════════════════════════
+  //  FAVORITES & HISTORY
+  // ══════════════════════════════════════════
+  function toggleFav() {
+    haptic('medium');
+    if (!currentTrack) return;
+    const idx = favorites.findIndex(f => f.id === currentTrack.id);
+    if (idx >= 0) {
+      favorites.splice(idx, 1);
+      document.getElementById('player-fav-btn').classList.remove('liked');
+      showToast('Удалено из избранного');
+    } else {
+      favorites.unshift({ ...currentTrack });
+      document.getElementById('player-fav-btn').classList.add('liked');
+      showToast('Добавлено в избранное ♥');
+    }
+    localStorage.setItem('nm_favs', JSON.stringify(favorites));
+  }
 
-        function setPlayingState(playing) {
-            isPlaying = playing;
-            document.getElementById('mini-icon-play').classList.toggle('hidden', playing);
-            document.getElementById('mini-icon-pause').classList.toggle('hidden', !playing);
-            document.getElementById('full-icon-play').classList.toggle('hidden', playing);
-            document.getElementById('full-icon-pause').classList.toggle('hidden', !playing);
-        }
+  function addToHistory(t) {
+    history = history.filter(h => h.id !== t.id);
+    history.unshift({ ...t });
+    if (history.length > 50) history.pop();
+    localStorage.setItem('nm_hist', JSON.stringify(history));
+  }
 
-        function toggleAudio() {
-            haptic('light');
-            if (!currentTrack) return;
-            if (audio.paused) {
-                audio.play();
-                setPlayingState(true);
-            } else {
-                audio.pause();
-                setPlayingState(false);
-            }
-        }
+  // ══════════════════════════════════════════
+  //  LIBRARY SCREEN
+  // ══════════════════════════════════════════
+  function setLibTab(btn, tab) {
+    haptic('selection');
+    libTab = tab;
+    document.getElementById('lib-tab-favs').className = 'flex-1 py-2 rounded-xl text-sm font-bold transition' + (tab==='favs' ? ' accent text-black' : ' glass-card opacity-60');
+    document.getElementById('lib-tab-hist').className = 'flex-1 py-2 rounded-xl text-sm font-bold transition' + (tab==='hist' ? ' accent text-black' : ' glass-card opacity-60');
+    renderLib();
+  }
 
-        function onSeek(val) {
-            if (audio.duration) {
-                audio.currentTime = (val / 100) * audio.duration;
-            }
-        }
+  function renderLib() {
+    const list = libTab === 'favs' ? favorites : history;
+    const box = document.getElementById('lib-list');
+    if (!list.length) {
+      box.innerHTML = `<div class="py-16 text-center text-sm opacity-40 font-semibold">${libTab==='favs' ? 'Ещё нет избранных треков' : 'История пуста'}</div>`;
+      return;
+    }
+    queue = list;
+    box.innerHTML = list.map((t, i) => `
+      <div onclick="playAt(${i}); switchTab('home', document.querySelector('.tab-btn'));" class="glass-card rounded-2xl p-2.5 flex items-center gap-3 cursor-pointer group">
+        <div class="relative w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 bg-zinc-800">
+          <img src="${escH(t.cover)}" class="w-full h-full object-cover" loading="lazy">
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-bold truncate text-white">${escH(t.title)}</div>
+          <div class="text-xs opacity-50 truncate font-medium mt-0.5">${escH(t.artist)}</div>
+        </div>
+        <button onclick="event.stopPropagation(); currentTrack=${JSON.stringify(t).replace(/"/g,'&quot;')}; sendToTelegram();" class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style="background:rgba(29,185,84,.12); color:#1DB954;">
+          <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4m-7 8h10"/></svg>
+        </button>
+      </div>`).join('');
+  }
 
-        function openFullPlayer() {
-            haptic('light');
-            document.getElementById('full-player-modal').classList.remove('translate-y-full');
-        }
+  function updateProfileCounts() {
+    document.getElementById('fav-count').textContent = favorites.length;
+    document.getElementById('hist-count').textContent = history.length;
+  }
 
-        function closeFullPlayer() {
-            haptic('light');
-            document.getElementById('full-player-modal').classList.add('translate-y-full');
-        }
+  // ══════════════════════════════════════════
+  //  TELEGRAM SEND
+  // ══════════════════════════════════════════
+  function sendToTelegram() {
+    haptic('success');
+    if (!currentTrack) { showToast('Сначала выбери трек'); return; }
+    showToast(`⬇ Отправляю: ${currentTrack.title}`);
+    if (tg?.sendData) {
+      try {
+        tg.sendData(JSON.stringify({
+          action: 'download',
+          track_id: currentTrack.id,
+          title: currentTrack.title,
+          artist: currentTrack.artist,
+          url: currentTrack.url,
+          source: currentTrack.source
+        }));
+      } catch (e) {
+        console.warn('sendData failed:', e);
+      }
+    }
+  }
 
-        function toggleLikeCurrent() {
-            haptic('success');
-            if (!currentTrack) return;
-            const idx = favorites.findIndex(x => x.id === currentTrack.id);
-            if (idx >= 0) {
-                favorites.splice(idx, 1);
-                showToast('Удалено из Любимых');
-            } else {
-                favorites.unshift(currentTrack);
-                showToast('Добавлено в Любимые');
-            }
-            localStorage.setItem('nm_favorites', JSON.stringify(favorites));
-            updateLikeIcons();
-            renderLibrary();
-            document.getElementById('home-fav-count').innerText = `${favorites.length} треков`;
-        }
+  function downloadTrack(idx) {
+    const t = queue[idx];
+    if (!t) return;
+    currentTrack = t;
+    sendToTelegram();
+  }
 
-        function updateLikeIcons() {
-            if (!currentTrack) return;
-            const isFav = favorites.some(x => x.id === currentTrack.id);
-            const mini = document.getElementById('mini-like-icon');
-            const full = document.getElementById('full-like-icon');
-            if (isFav) {
-                mini.classList.add('fill-[#1DB954]', 'stroke-[#1DB954]');
-                full.classList.add('fill-[#1DB954]', 'stroke-[#1DB954]');
-            } else {
-                mini.classList.remove('fill-[#1DB954]', 'stroke-[#1DB954]');
-                full.classList.remove('fill-[#1DB954]', 'stroke-[#1DB954]');
-            }
-        }
+  // ══════════════════════════════════════════
+  //  MISC
+  // ══════════════════════════════════════════
+  function clearCache() {
+    haptic('medium');
+    favorites = []; history = [];
+    localStorage.removeItem('nm_favs');
+    localStorage.removeItem('nm_hist');
+    renderLib();
+    updateProfileCounts();
+    showToast('Кэш очищен');
+  }
 
-        function sendCurrentTrackToTelegram() {
-            haptic('success');
-            if (!currentTrack) return;
-            showToast(`Отправляю в чат: ${currentTrack.title}`);
+  function haptic(type = 'light') {
+    if (!tg?.HapticFeedback) return;
+    if (type === 'light') tg.HapticFeedback.impactOccurred('light');
+    else if (type === 'medium') tg.HapticFeedback.impactOccurred('medium');
+    else if (type === 'selection') tg.HapticFeedback.selectionChanged();
+    else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+  }
 
-            if (tg?.sendData) {
-                tg.sendData(JSON.stringify({
-                    action: 'download',
-                    track_id: currentTrack.id,
-                    title: currentTrack.title,
-                    artist: currentTrack.artist,
-                    source: currentTrack.source || activeSearchMode
-                }));
-            }
-        }
+  let toastTimer = null;
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  }
 
-        // Navigation
-        function switchTab(tabId) {
-            haptic('selection');
-            ['home', 'search', 'library', 'profile'].forEach(t => {
-                document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tabId);
-            });
-            document.querySelectorAll('.nav-btn').forEach(btn => {
-                const isActive = btn.dataset.tab === tabId;
-                btn.classList.toggle('text-[#1DB954]', isActive);
-                btn.classList.toggle('text-[#A7A7A7]', !isActive);
-            });
-            if (tabId === 'library') renderLibrary();
-        }
+  function escH(str) {
+    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
 
-        function setSearchMode(mode) {
-            haptic('selection');
-            activeSearchMode = mode;
-            const isOff = mode === 'official';
-            const offBtn = document.getElementById('search-mode-off');
-            const scBtn = document.getElementById('search-mode-sc');
+  // ══════════════════════════════════════════
+  //  DEMO FALLBACK DATA
+  // ══════════════════════════════════════════
+  function getDemoTracks() {
+    return [
+      { id:'demo_1', title:'ASPHALT 8', artist:'MACAN', cover:'https://avatars.yandex.net/get-music-content/9852239/64923f66.a.27641245-1/400x400', duration:172, is_censored:false, source:'official', url:'', preview_url:'' },
+      { id:'demo_2', title:'Горгород', artist:'Oxxxymiron', cover:'https://avatars.yandex.net/get-music-content/38044/cd8c7557.a.3087311-1/400x400', duration:265, is_censored:false, source:'official', url:'', preview_url:'' },
+      { id:'demo_3', title:'KONSTRUKT', artist:'Oxxxymiron', cover:'https://avatars.yandex.net/get-music-content/9707577/604ca63a.a.26546740-1/400x400', duration:481, is_censored:false, source:'official', url:'', preview_url:'' },
+      { id:'demo_4', title:'Половина моя', artist:'Miyagi & Эндшпиль', cover:'https://avatars.yandex.net/get-music-content/38044/cd8c7557.a.3087311-1/400x400', duration:241, is_censored:false, source:'soundcloud', url:'', preview_url:'' },
+      { id:'demo_5', title:'Батя в здании', artist:'MC Хованский', cover:'https://avatars.yandex.net/get-music-content/38044/5e2bc37b.a.4173875-1/400x400', duration:210, is_censored:true, source:'official', url:'', preview_url:'' },
+    ];
+  }
 
-            offBtn.className = isOff 
-                ? 'flex-1 py-2 rounded-xl spotify-green text-black font-extrabold shadow-md transition flex items-center justify-center space-x-1.5'
-                : 'flex-1 py-2 rounded-xl text-[#A7A7A7] hover:text-white transition flex items-center justify-center space-x-1.5';
-
-            scBtn.className = !isOff 
-                ? 'flex-1 py-2 rounded-xl bg-orange-600 text-white font-extrabold shadow-md transition flex items-center justify-center space-x-1.5'
-                : 'flex-1 py-2 rounded-xl text-[#A7A7A7] hover:text-white transition flex items-center justify-center space-x-1.5';
-
-            const query = document.getElementById('search-input').value.trim();
-            if (query) executeSearch(query);
-        }
-
-        function quickSearch(q) {
-            switchTab('search');
-            document.getElementById('search-input').value = q;
-            executeSearch(q);
-        }
-
-        const searchInput = document.getElementById('search-input');
-        let searchTimer = null;
-        searchInput.oninput = (e) => {
-            const val = e.target.value;
-            document.getElementById('search-clear-btn').classList.toggle('hidden', !val);
-            clearTimeout(searchTimer);
-            if (!val.trim()) {
-                document.getElementById('search-genre-tiles').classList.remove('hidden');
-                document.getElementById('search-results-list').innerHTML = '';
-                return;
-            }
-            searchTimer = setTimeout(() => executeSearch(val.trim()), 350);
-        };
-
-        function clearSearch() {
-            searchInput.value = '';
-            document.getElementById('search-clear-btn').classList.add('hidden');
-            document.getElementById('search-genre-tiles').classList.remove('hidden');
-            document.getElementById('search-results-list').innerHTML = '';
-        }
-
-        // --- REAL API SEARCH ---
-        async function executeSearch(query) {
-            document.getElementById('search-genre-tiles').classList.add('hidden');
-            const resultsBox = document.getElementById('search-results-list');
-            resultsBox.innerHTML = `
-                <div class="py-16 flex flex-col items-center justify-center space-y-3 text-[#A7A7A7]">
-                    <div class="w-7 h-7 border-2 border-[#1DB954] border-t-transparent rounded-full animate-spin"></div>
-                    <span class="text-xs font-medium">Поиск в каталоге...</span>
-                </div>
-            `;
-
-            try {
-                const resp = await fetch(`/api/search?q=${encodeURIComponent(query)}&mode=${activeSearchMode}`);
-                if (resp.ok) {
-                    const data = await resp.json();
-                    const tracks = data.results || [];
-                    if (tracks.length > 0) {
-                        renderSearchResults(tracks);
-                        return;
-                    }
-                }
-            } catch (err) {
-                console.warn("Backend API search failed, falling back to local catalog:", err);
-            }
-
-            // Fallback to local filtering if network is offline
-            const q = query.toLowerCase();
-            const matched = DEMO_TRENDS.filter(t => 
-                t.title.toLowerCase().includes(q) || 
-                t.artist.toLowerCase().includes(q)
-            );
-
-            if (matched.length > 0) {
-                renderSearchResults(matched);
-            } else {
-                resultsBox.innerHTML = `
-                    <div class="py-16 text-center text-[#727272] text-xs space-y-2">
-                        <svg class="w-8 h-8 mx-auto stroke-[#535353]" fill="none" viewBox="0 0 24 24" stroke-width="1.8">
-                            <circle cx="11" cy="11" r="8"></circle>
-                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                        </svg>
-                        <p class="font-medium text-[#B3B3B3]">По запросу «${escapeHtml(query)}» ничего не найдено</p>
-                        <p class="text-[11px] text-[#727272]">Попробуй переключить источник на ${activeSearchMode === 'official' ? 'SoundCloud' : 'Официальные'} или изменить запрос</p>
-                    </div>
-                `;
-            }
-        }
-
-        function renderSearchResults(tracks) {
-            const resultsBox = document.getElementById('search-results-list');
-            resultsBox.innerHTML = tracks.map((t, idx) => `
-                <div onclick='playTrack(${JSON.stringify(t)})' class="glass-card rounded-2xl p-3 flex items-center justify-between cursor-pointer active:scale-[0.98] transition group">
-                    <div class="flex items-center space-x-3.5 truncate pr-2">
-                        <span class="text-xs font-bold text-[#727272] w-4 text-center group-hover:text-white transition">${idx + 1}</span>
-                        <div class="relative w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-zinc-800 shadow">
-                            <img src="${escapeHtml(t.cover)}" class="w-full h-full object-cover">
-                        </div>
-                        <div class="truncate">
-                            <div class="font-bold text-[14px] text-white truncate group-hover:text-[#1DB954] transition leading-tight flex items-center space-x-1.5">
-                                <span class="truncate">${escapeHtml(t.title)}</span>
-                                ${t.is_censored ? '<span class="text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded-md">Clean</span>' : ''}
-                            </div>
-                            <div class="text-xs text-[#A7A7A7] truncate font-medium mt-0.5">${escapeHtml(t.artist)}</div>
-                        </div>
-                    </div>
-                    <button onclick="event.stopPropagation(); currentTrack=${JSON.stringify(t).replace(/"/g, '&quot;')}; sendCurrentTrackToTelegram();" title="Скачать в Telegram" class="w-8 h-8 rounded-full bg-white/10 hover:bg-[#1DB954] hover:text-black text-[#A7A7A7] flex items-center justify-center transition active:scale-90 flex-shrink-0">
-                        <svg class="w-4 h-4 fill-none stroke-current" stroke-width="2.2" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4m-7 8h10"/>
-                        </svg>
-                    </button>
-                </div>
-            `).join('');
-        }
-
-        function filterCategory(cat) {
-            haptic('light');
-            if (cat === 'favorites') {
-                switchTab('library');
-                setLibSubTab('favs');
-            } else if (cat === 'remixes') {
-                switchTab('search');
-                setSearchMode('soundcloud');
-                document.getElementById('search-input').value = 'Remix';
-                executeSearch('Remix');
-            } else if (cat === 'clean_only') {
-                switchTab('search');
-                setSearchMode('official');
-                document.getElementById('search-input').value = 'Clean';
-                executeSearch('Clean');
-            } else {
-                switchTab('search');
-                setSearchMode('official');
-                executeSearch('Топ СНГ');
-            }
-        }
-
-        function setLibSubTab(tab) {
-            haptic('selection');
-            currentLibTab = tab;
-            const isFav = tab === 'favs';
-            document.getElementById('lib-btn-favs').className = isFav ? 'px-4 py-2 rounded-full spotify-green text-black shadow-md transition' : 'px-4 py-2 rounded-full glass-card text-[#A7A7A7] hover:text-white transition';
-            document.getElementById('lib-btn-history').className = !isFav ? 'px-4 py-2 rounded-full spotify-green text-black shadow-md transition' : 'px-4 py-2 rounded-full glass-card text-[#A7A7A7] hover:text-white transition';
-            renderLibrary();
-        }
-
-        function renderLibrary() {
-            const list = currentLibTab === 'favs' ? favorites : history;
-            const box = document.getElementById('library-list');
-            document.getElementById('lib-total-badge').innerText = `${list.length} треков`;
-
-            if (list.length === 0) {
-                box.innerHTML = `
-                    <div class="py-16 text-center text-[#727272] text-xs space-y-2">
-                        <svg class="w-8 h-8 mx-auto stroke-[#535353]" fill="none" viewBox="0 0 24 24" stroke-width="1.8">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-                        </svg>
-                        <p class="font-medium text-[#B3B3B3]">${currentLibTab === 'favs' ? 'В избранном пока ничего нет' : 'История пуста'}</p>
-                        <p class="text-[11px] text-[#727272]">Нажми на сердечко на любом треке, чтобы сохранить его сюда</p>
-                    </div>
-                `;
-                return;
-            }
-
-            box.innerHTML = list.map((t, idx) => `
-                <div onclick='playTrack(${JSON.stringify(t)})' class="glass-card rounded-2xl p-3 flex items-center justify-between cursor-pointer active:scale-[0.98] transition group">
-                    <div class="flex items-center space-x-3.5 truncate pr-2">
-                        <div class="relative w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-zinc-800 shadow">
-                            <img src="${escapeHtml(t.cover)}" class="w-full h-full object-cover">
-                        </div>
-                        <div class="truncate">
-                            <div class="font-bold text-[14px] text-white truncate leading-tight">${escapeHtml(t.title)}</div>
-                            <div class="text-xs text-[#A7A7A7] truncate font-medium mt-0.5">${escapeHtml(t.artist)}</div>
-                        </div>
-                    </div>
-                    <button onclick="event.stopPropagation(); currentTrack=${JSON.stringify(t).replace(/"/g, '&quot;')}; sendCurrentTrackToTelegram();" title="Скачать в Telegram" class="w-8 h-8 rounded-full bg-white/10 hover:bg-[#1DB954] hover:text-black text-[#A7A7A7] flex items-center justify-center transition active:scale-90 flex-shrink-0">
-                        <svg class="w-4 h-4 fill-none stroke-current" stroke-width="2.2" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4m-7 8h10"/>
-                        </svg>
-                    </button>
-                </div>
-            `).join('');
-        }
-
-        function playNext() {
-            haptic('light');
-            if (DEMO_TRENDS.length > 0) {
-                const nextIdx = Math.floor(Math.random() * DEMO_TRENDS.length);
-                playTrack(DEMO_TRENDS[nextIdx]);
-            }
-        }
-
-        function playPrev() {
-            haptic('light');
-            if (DEMO_TRENDS.length > 0) {
-                const prevIdx = (DEMO_TRENDS.length - 1);
-                playTrack(DEMO_TRENDS[prevIdx]);
-            }
-        }
-
-        function toggleShuffle() {
-            haptic('selection');
-            const btn = document.getElementById('shuffle-btn');
-            btn.classList.toggle('text-[#1DB954]');
-            showToast('Перемешивание включено');
-        }
-
-        function toggleRepeat() {
-            haptic('selection');
-            const btn = document.getElementById('repeat-btn');
-            btn.classList.toggle('text-[#1DB954]');
-            showToast('Повтор трека включен');
-        }
-
-        function clearAppCache() {
-            haptic('medium');
-            localStorage.removeItem('nm_favorites');
-            localStorage.removeItem('nm_history');
-            favorites = [];
-            history = [];
-            renderLibrary();
-            document.getElementById('home-fav-count').innerText = '0 треков';
-            showToast('Кэш приложения очищен');
-        }
-
-        function showQuickInfo() {
-            haptic('light');
-            showToast('NoMusic WebApp v2.1 • Spotify Glass Style');
-        }
-
-        // Initialize Home on start
-        renderHome();
-    </script>
+  // ══════════════════════════════════════════
+  //  INIT
+  // ══════════════════════════════════════════
+  loadTrending();
+</script>
 </body>
 </html>
