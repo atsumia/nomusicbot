@@ -22,7 +22,8 @@ from aiogram.types import (
     InlineQueryResultCachedAudio,
     InlineQueryResultArticle,
     InputTextMessageContent,
-    WebAppInfo
+    WebAppInfo,
+    MenuButtonDefault
 )
 
 import database
@@ -85,8 +86,9 @@ def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
     
     keyboard = []
-    if WEBAPP_URL:
-        keyboard.append([InlineKeyboardButton(text="🟢 Открыть Spotify WebApp", web_app=WebAppInfo(url=WEBAPP_URL))])
+    # Mini App кнопка временно отключена
+    # if WEBAPP_URL:
+    #     keyboard.append([InlineKeyboardButton(text="🟢 Открыть Spotify WebApp", web_app=WebAppInfo(url=WEBAPP_URL))])
     keyboard.extend([
         [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
          InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
@@ -1157,6 +1159,11 @@ async def set_bot_commands():
             await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
         except Exception:
             pass
+
+    try:
+        await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+    except Exception as e:
+        print(f"Error resetting chat menu button: {e}")
 
 async def main():
     database.init_db()
