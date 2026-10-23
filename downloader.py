@@ -1104,17 +1104,42 @@ def search_sc_sync(query: str, limit: int = 15, original_query: str = ""):
     return ranked_tracks[:limit]
 
 async def download_best_ym_stream(track, path: str):
-    """Выбирает максимальный реально доступный битрейт (320, 192 или 128 kbps)"""
+    """Выбирает максимальный битрейт и скачивает поток через aiohttp с заголовками браузера"""
     try:
         download_info = await track.get_download_info_async()
+        if not download_info:
+            raise Exception("Яндекс Музыка не предоставила ссылки на аудиопоток.")
+
         mp3_info = [i for i in download_info if i.codec == 'mp3']
-        best = max(mp3_info, key=lambda x: x.bitrate_in_kbps) if mp3_info else (download_info[0] if download_info else None)
-        if best:
-            await best.download_async(path)
-        else:
-            await track.download_async(filename=path)
+        best = max(mp3_info, key=lambda x: x.bitrate_in_kbps) if mp3_info else download_info[0]
+
+        direct_link = await best.get_direct_link_async()
+        if not direct_link:
+            raise Exception("Не удалось сгенерировать прямую ссылку на аудиопоток.")
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'identity;q=1, *;q=0',
+            'Range': 'bytes=0-'
+        }
+        proxy = os.getenv("YANDEX_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+        timeout = aiohttp.ClientTimeout(total=45)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(direct_link, headers=headers, proxy=proxy) as resp:
+                if resp.status in (200, 206):
+                    with open(path, 'wb') as f:
+                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                            f.write(chunk)
+                elif resp.status == 403:
+                    raise Exception("Сервер Яндекс Музыки заблокировал скачивание (403 Forbidden). Проверьте токен YANDEX_MUSIC_TOKEN или используйте прокси РФ.")
+                elif resp.status == 401:
+                    raise Exception("Токен Яндекс Музыки недействителен (401 Unauthorized). Обновите токен.")
+                else:
+                    raise Exception(f"HTTP {resp.status} {resp.reason} от серверов Яндекс Музыки.")
     except Exception as e:
-        print(f"YM download stream error: {e}")
+        print(f"❌ [YM STREAM ERROR]: {e}")
         raise e
 
 async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_DIR) -> dict:
@@ -1143,50 +1168,59 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
         raise Exception("Официальный музыкальный сервер временно недоступен. Попробуйте режим SoundCloud.")
 
     try:
-        ym_query = f"{artist} - {title}"
-        sr = await client.search(text=ym_query, type_='track', page=0)
-        target_ym_track = None
+        clean_title = re.sub(r'\(.*?\)|\[.*?\]', '', title).strip()
+        queries_to_try = [
+            f"{artist} - {title}",
+            f"{artist} {title}",
+            title,
+            f"{artist} {clean_title}" if clean_title != title else ""
+        ]
 
-        if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
-            target_ym_track = sr.tracks.results[0]
-        else:
-            alt_query = f"{artist} {title}"
-            sr = await client.search(text=alt_query, type_='track', page=0)
+        target_ym_track = None
+        for q in queries_to_try:
+            if not q:
+                continue
+            sr = await client.search(text=q, type_='track', page=0)
             if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
                 target_ym_track = sr.tracks.results[0]
+                break
 
-        if target_ym_track:
-            dl_task = download_best_ym_stream(target_ym_track, mp3_path)
-            lyrics_task = check_ym_track_censorship(client, target_ym_track)
+        if not target_ym_track:
+            raise Exception("Аудиозапись не найдена в каталоге Яндекс Музыки. Попробуй найти её в SoundCloud.")
 
-            dl_res, lyrics_result = await asyncio.gather(dl_task, lyrics_task, return_exceptions=True)
+        dl_task = download_best_ym_stream(target_ym_track, mp3_path)
+        lyrics_task = check_ym_track_censorship(client, target_ym_track)
 
-            if not isinstance(dl_res, Exception):
-                download_success = True
-                print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 для {artist} — {title}")
-                
-                sig = f"{normalize_text_ru(artist)} - {normalize_text_ru(title)}"
-                has_lyrics_cuts = False
-                text_was_read = False
-                if isinstance(lyrics_result, tuple):
-                    has_lyrics_cuts, text_was_read = lyrics_result
+        dl_res, lyrics_result = await asyncio.gather(dl_task, lyrics_task, return_exceptions=True)
 
-                # Если Яндекс не ответил текстом, опрашиваем LRCLIB
-                if not has_lyrics_cuts and not text_was_read:
-                    has_lyrics_cuts = await fetch_lrclib_track_censorship(artist, title)
+        if isinstance(dl_res, Exception):
+            raise dl_res
 
-                if has_lyrics_cuts:
-                    is_censored = True
-                    database.set_cached_censorship(sig, True)
-                    print(f"✂️ [LYRICS/LEXICAL DETECTED]: Обнаружен триггер цензуры -> сохранён статус Clean")
-                elif text_was_read:
-                    database.set_cached_censorship(sig, False)
+        download_success = True
+        print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 для {artist} — {title}")
+        
+        sig = f"{normalize_text_ru(artist)} - {normalize_text_ru(title)}"
+        has_lyrics_cuts = False
+        text_was_read = False
+        if isinstance(lyrics_result, tuple):
+            has_lyrics_cuts, text_was_read = lyrics_result
+
+        # Если Яндекс не ответил текстом, опрашиваем LRCLIB
+        if not has_lyrics_cuts and not text_was_read:
+            has_lyrics_cuts = await fetch_lrclib_track_censorship(artist, title)
+
+        if has_lyrics_cuts:
+            is_censored = True
+            database.set_cached_censorship(sig, True)
+            print(f"✂️ [LYRICS/LEXICAL DETECTED]: Обнаружен триггер цензуры -> сохранён статус Clean")
+        elif text_was_read:
+            database.set_cached_censorship(sig, False)
     except Exception as e:
         print(f"❌ [YM STREAM ERROR]: Ошибка загрузки из официального каталога: {e}")
-        raise Exception("Не удалось выгрузить аудиозапись с официальной площадки (ограничение прав или региона).")
+        raise e
 
     if not download_success or not os.path.exists(mp3_path):
-        raise Exception("Аудиозапись не найдена в официальной медиатеке. Попробуй найти её в SoundCloud.")
+        raise Exception("Не удалось сохранить аудиозапись. Попробуй повторить запрос.")
 
     thumb_path = None
     if cover_url:
