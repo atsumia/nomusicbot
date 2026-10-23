@@ -21,7 +21,8 @@ from aiogram.types import (
     InlineQuery,
     InlineQueryResultCachedAudio,
     InlineQueryResultArticle,
-    InputTextMessageContent
+    InputTextMessageContent,
+    WebAppInfo
 )
 
 import database
@@ -35,6 +36,7 @@ from downloader import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBAPP_URL = os.getenv("WEBAPP_URL")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не задан!")
@@ -82,13 +84,16 @@ def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     user = database.get_user(user_id)
     mode_text = "Официальные релизы" if user['search_mode'] == 'official' else "Ремиксы (SoundCloud)"
     
-    keyboard = [
+    keyboard = []
+    if WEBAPP_URL:
+        keyboard.append([InlineKeyboardButton(text="🟢 Открыть Spotify WebApp", web_app=WebAppInfo(url=WEBAPP_URL))])
+    keyboard.extend([
         [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
          InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
         [InlineKeyboardButton(text="📝 Поиск по тексту песни", callback_data="menu:lyrics_search")],
         [InlineKeyboardButton(text="👤 Мой кабинет", callback_data="menu:profile")],
         [InlineKeyboardButton(text=f"🎧 Режим: {mode_text}", callback_data="menu:toggle_mode")]
-    ]
+    ])
 
     if is_admin(user_id):
         keyboard.append([InlineKeyboardButton(text="⚡️ Панель администратора", callback_data="admin:menu")])
@@ -648,6 +653,34 @@ async def perform_artist_search_and_send(chat_id: int, user_id: int, artist_quer
     except Exception as e:
         await status_msg.edit_text(f"Ошибка при поиске артиста: {str(e)}")
 
+@dp.message(F.web_app_data)
+async def handle_web_app_data(message: types.Message):
+    try:
+        data = json.loads(message.web_app_data.data)
+        if data.get('action') == 'download':
+            title = data.get('title', '')
+            artist = data.get('artist', '')
+            source = data.get('source', 'official')
+            status_msg = await message.answer(f"⏳ Загрузка из WebApp: <b>{artist} — {title}</b>...", parse_mode="HTML")
+            query = f"{artist} - {title}" if artist else title
+            results = await search_tracks(query, mode=source, limit=1)
+            if results:
+                target = results[0]
+                await process_and_send_audio(
+                    chat_id=message.chat.id,
+                    user_id=message.from_user.id,
+                    track_id=target['id'],
+                    url=target['url'],
+                    status_msg=status_msg,
+                    artist_id=target.get('artist_id'),
+                    album_id=target.get('album_id'),
+                    is_censored=target.get('is_censored', False)
+                )
+            else:
+                await status_msg.edit_text("❌ Трек не найден для скачивания.")
+    except Exception as e:
+        print(f"❌ [WEBAPP DATA ERROR]: {e}")
+
 @dp.message(F.text.regexp(r'https?://[^\s]+'))
 async def handle_url(message: types.Message):
     url = message.text.strip()
@@ -1052,12 +1085,20 @@ async def inline_search_handler(inline_query: InlineQuery):
         print(f"❌ [INLINE LOCAL DB ERROR]: {e}")
         await inline_query.answer([], cache_time=2, is_personal=True)
 
+async def handle_webapp(request):
+    html_path = os.path.join(os.path.dirname(__file__), 'index.html')
+    if os.path.exists(html_path):
+        with open(html_path, 'r', encoding='utf-8') as f:
+            return web.Response(text=f.read(), content_type='text/html')
+    return web.Response(text="NoMusic bot is running!")
+
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
 
 async def start_dummy_web_server():
     app = web.Application()
-    app.router.add_get('/', handle_health_check)
+    app.router.add_get('/', handle_webapp)
+    app.router.add_get('/app', handle_webapp)
     app.router.add_get('/health', handle_health_check)
     
     port = int(os.getenv("PORT", 8080))

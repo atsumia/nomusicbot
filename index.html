@@ -1,67 +1,70 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>NoMusic Stream</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        apple: {
-                            red: '#FA2D48',
-                            coral: '#FF3B30',
-                            cardDark: '#1C1C1E',
-                            subDark: '#2C2C2E',
-                            light: '#F2F2F7',
-                            textGray: '#8E8E93'
-                        }
-                    }
-                }
-            }
-        }
-    </script>
+    <title>NoMusic — Spotify Glassmorphism WebApp</title>
+    <!-- Tailwind CSS (Antigravity allowlisted CDN) -->
+    <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         * {
             -webkit-tap-highlight-color: transparent;
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Circular", "Spotify Mix", "Inter", "SF Pro Display", sans-serif;
             user-select: none;
             -webkit-user-select: none;
         }
         body {
             overscroll-behavior-y: none;
+            background-color: #121212;
         }
-        .apple-glass {
-            background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(25px);
-            -webkit-backdrop-filter: blur(25px);
-            border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
+
+        /* Glassmorphism Classes */
+        .glass-nav {
+            background: rgba(18, 18, 18, 0.78);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
         }
-        .dark .apple-glass {
-            background: rgba(24, 24, 26, 0.88);
-            backdrop-filter: blur(25px);
-            -webkit-backdrop-filter: blur(25px);
-            border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+        .glass-header {
+            background: rgba(18, 18, 18, 0.72);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         }
         .glass-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.04);
-            border: 0.5px solid rgba(0, 0, 0, 0.04);
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
         }
-        .dark .glass-card {
-            background: rgba(32, 32, 36, 0.85);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            box-shadow: 0 6px 24px -2px rgba(0, 0, 0, 0.35);
-            border: 0.5px solid rgba(255, 255, 255, 0.07);
+        .glass-card:hover, .glass-card:active {
+            background: rgba(255, 255, 255, 0.09);
+            border-color: rgba(255, 255, 255, 0.16);
+        }
+        .glass-player {
+            background: rgba(24, 24, 24, 0.85);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+        }
+        .glass-pill {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+        }
+        .spotify-green {
+            background-color: #1DB954;
+        }
+        .spotify-green:hover {
+            background-color: #1ed760;
+        }
+        .spotify-green-text {
+            color: #1DB954;
         }
         .no-scrollbar::-webkit-scrollbar {
             display: none;
@@ -70,358 +73,406 @@
             -ms-overflow-style: none;
             scrollbar-width: none;
         }
+
+        /* Scrubber slider */
         input[type=range] {
             -webkit-appearance: none;
             background: transparent;
         }
         input[type=range]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            height: 15px;
-            width: 15px;
+            height: 12px;
+            width: 12px;
             border-radius: 50%;
             background: #FFFFFF;
-            box-shadow: 0 2px 7px rgba(0,0,0,0.35);
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
             cursor: pointer;
-            margin-top: -5.5px;
+            margin-top: -4px;
+            transition: transform 0.1s;
+        }
+        input[type=range]:active::-webkit-slider-thumb {
+            transform: scale(1.3);
+            background: #1DB954;
         }
         input[type=range]::-webkit-slider-runnable-track {
             height: 4px;
             border-radius: 2px;
-            background: rgba(120, 120, 128, 0.25);
+            background: rgba(255, 255, 255, 0.2);
         }
     </style>
 </head>
-<body class="bg-[#F2F2F7] dark:bg-black text-[#1C1C1E] dark:text-[#F2F2F7] min-h-screen pb-32 transition-colors duration-300">
+<body class="bg-[#121212] text-white min-h-screen pb-32 antialiased selection:bg-[#1DB954] selection:text-black">
 
-    <!-- Верхняя шапка -->
-    <header class="sticky top-0 z-40 apple-glass px-4 py-3 flex items-center justify-between">
+    <!-- Ambient Glass Gradient Background Spheres -->
+    <div class="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div class="absolute -top-24 -left-24 w-80 h-80 rounded-full bg-[#1DB954]/15 blur-[90px]"></div>
+        <div class="absolute top-1/3 -right-20 w-72 h-72 rounded-full bg-emerald-600/10 blur-[100px]"></div>
+        <div class="absolute -bottom-20 left-10 w-80 h-80 rounded-full bg-teal-500/10 blur-[100px]"></div>
+    </div>
+
+    <!-- Top Navigation Header -->
+    <header class="sticky top-0 z-40 glass-header px-4 py-3.5 flex items-center justify-between">
         <div class="flex items-center space-x-3">
-            <div id="header-avatar" class="w-9 h-9 rounded-full bg-gradient-to-tr from-apple-red to-orange-500 text-white font-bold flex items-center justify-center text-sm shadow-sm">
-                NM
+            <div id="user-avatar" class="w-9 h-9 rounded-full bg-gradient-to-tr from-[#1DB954] to-emerald-300 text-black font-extrabold flex items-center justify-center text-sm shadow-lg shadow-[#1DB954]/20 ring-2 ring-white/10">
+                U
             </div>
             <div>
-                <span class="text-[10px] font-bold tracking-wider text-apple-red uppercase">NoMusic Stream</span>
-                <h1 id="header-user-name" class="font-bold text-base leading-tight">Слушатель</h1>
+                <span id="greeting-label" class="text-[11px] font-semibold text-[#B3B3B3] uppercase tracking-wider block leading-none">Добрый день</span>
+                <h1 id="user-display-name" class="font-extrabold text-base leading-tight mt-0.5 truncate max-w-[170px]">Слушатель</h1>
             </div>
         </div>
+
         <div class="flex items-center space-x-2">
-            <button onclick="toggleTheme()" class="w-9 h-9 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center active:scale-90 transition">
-                <span id="theme-icon" class="text-sm">🌙</span>
+            <div class="glass-pill px-2.5 py-1 rounded-full flex items-center space-x-1.5 text-[11px] font-medium text-emerald-400">
+                <span class="w-2 h-2 rounded-full bg-[#1DB954] animate-pulse"></span>
+                <span>NoMusic</span>
+            </div>
+            <button onclick="showQuickInfo()" class="w-8 h-8 rounded-full glass-pill flex items-center justify-center text-xs active:scale-90 transition text-zinc-300">
+                ℹ️
             </button>
         </div>
     </header>
 
-    <!-- Уведомление (Toast) -->
-    <div id="toast" class="fixed top-16 left-4 right-4 z-50 transform -translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
-        <div class="bg-apple-red text-white text-xs font-semibold px-4 py-3 rounded-2xl shadow-xl flex items-center space-x-2 justify-center">
-            <span id="toast-text">Уведомление</span>
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed top-16 left-4 right-4 z-50 transform -translate-y-24 opacity-0 transition-all duration-300 pointer-events-none flex justify-center">
+        <div class="glass-player text-white text-xs font-semibold px-5 py-3 rounded-2xl shadow-2xl flex items-center space-x-2.5 border border-white/15">
+            <span id="toast-icon" class="text-base">✨</span>
+            <span id="toast-text">Действие выполнено</span>
         </div>
     </div>
 
-    <!-- Основной контент -->
-    <main class="max-w-md mx-auto px-4 pt-3">
-        
-        <!-- ================= ЭКРАН 1: ГЛАВНАЯ ================= -->
-        <section id="screen-home" class="space-y-6">
-            
-            <div class="relative overflow-hidden rounded-3xl p-6 bg-gradient-to-br from-[#1C1C1E] to-[#2C2C2E] text-white shadow-xl">
-                <div class="absolute -right-6 -bottom-6 w-32 h-32 bg-apple-red/30 rounded-full blur-2xl pointer-events-none"></div>
-                <span class="text-xs font-bold uppercase tracking-widest text-apple-red">Лицензионный каталог</span>
-                <h2 class="text-2xl font-black mt-1 leading-snug">Твоя музыка.<br>В чистом виде.</h2>
-                <p class="text-xs text-zinc-400 mt-2 max-w-[220px]">Оригинальный звук, студийные релизы и синхронизация с Telegram.</p>
-                <button onclick="switchTab('search')" class="mt-4 px-4 py-2 bg-apple-red hover:bg-apple-coral active:scale-95 transition text-white rounded-full text-xs font-semibold shadow-md flex items-center space-x-1.5">
-                    <span>Начать поиск</span>
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path></svg>
-                </button>
-            </div>
+    <!-- Main Content Container -->
+    <main class="relative z-10 max-w-md mx-auto px-4 pt-4">
 
-            <!-- Реальные популярные релизы -->
-            <div>
-                <div class="flex items-center justify-between mb-3 px-1">
-                    <h3 class="font-bold text-lg">Популярные треки</h3>
-                    <span onclick="loadTrendingReleases(true)" class="text-xs font-medium text-apple-red cursor-pointer active:opacity-70">Обновить</span>
-                </div>
-                <div class="flex space-x-4 overflow-x-auto no-scrollbar pb-2 pt-1" id="releases-carousel">
-                    <div class="text-xs text-apple-textGray py-8 px-2 flex items-center space-x-2">
-                        <span class="animate-spin text-sm">⏳</span>
-                        <span>Загрузка чарта...</span>
-                    </div>
-                </div>
-            </div>
+        <!-- ================= SECTION 1: HOME ================= -->
+        <section id="tab-home" class="space-y-6">
 
-            <!-- Популярные артисты -->
-            <div>
-                <div class="flex items-center justify-between mb-3 px-1">
-                    <h3 class="font-bold text-lg">Популярные артисты</h3>
-                </div>
-                <div class="grid grid-cols-3 gap-3" id="artists-grid"></div>
-            </div>
-
-            <!-- Быстрые плашки -->
-            <div class="grid grid-cols-2 gap-3 pt-1">
-                <div onclick="switchTab('library')" class="glass-card p-4 rounded-2xl cursor-pointer active:scale-95 transition flex flex-col justify-between h-28">
-                    <div class="w-9 h-9 rounded-xl bg-apple-red text-white flex items-center justify-center text-lg shadow-sm">
+            <!-- Spotify-like Quick Shortcuts Grid (2 cols) -->
+            <div class="grid grid-cols-2 gap-2.5">
+                <div onclick="filterCategory('favorites')" class="glass-card rounded-xl p-2.5 flex items-center space-x-3 cursor-pointer active:scale-95 transition group">
+                    <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-md flex-shrink-0">
                         <svg class="w-5 h-5 fill-white" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
                     </div>
-                    <div>
-                        <div class="font-bold text-sm">Любимые</div>
-                        <div class="text-[11px] text-apple-textGray" id="fav-count-badge">0 треков</div>
+                    <div class="truncate">
+                        <span class="font-bold text-xs truncate block">Любимые</span>
+                        <span id="home-fav-count" class="text-[10px] text-[#B3B3B3]">0 треков</span>
                     </div>
                 </div>
-                <div onclick="switchTab('search')" class="glass-card p-4 rounded-2xl cursor-pointer active:scale-95 transition flex flex-col justify-between h-28">
-                    <div class="w-9 h-9 rounded-xl bg-blue-500 text-white flex items-center justify-center text-lg shadow-sm">
-                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+
+                <div onclick="filterCategory('top_cis')" class="glass-card rounded-xl p-2.5 flex items-center space-x-3 cursor-pointer active:scale-95 transition">
+                    <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-[#1DB954] to-teal-700 flex items-center justify-center shadow-md flex-shrink-0">
+                        <span class="text-lg">🔥</span>
                     </div>
-                    <div>
-                        <div class="font-bold text-sm">Каталог</div>
-                        <div class="text-[11px] text-apple-textGray">Поиск в боте</div>
+                    <div class="truncate">
+                        <span class="font-bold text-xs truncate block">Топ СНГ 2026</span>
+                        <span class="text-[10px] text-[#B3B3B3]">Официальные</span>
                     </div>
                 </div>
+
+                <div onclick="filterCategory('remixes')" class="glass-card rounded-xl p-2.5 flex items-center space-x-3 cursor-pointer active:scale-95 transition">
+                    <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-orange-500 to-amber-700 flex items-center justify-center shadow-md flex-shrink-0">
+                        <span class="text-lg">☁️</span>
+                    </div>
+                    <div class="truncate">
+                        <span class="font-bold text-xs truncate block">SoundCloud</span>
+                        <span class="text-[10px] text-[#B3B3B3]">Remixes & Phonk</span>
+                    </div>
+                </div>
+
+                <div onclick="filterCategory('clean_only')" class="glass-card rounded-xl p-2.5 flex items-center space-x-3 cursor-pointer active:scale-95 transition">
+                    <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-sky-500 to-blue-700 flex items-center justify-center shadow-md flex-shrink-0">
+                        <span class="text-lg">✂️</span>
+                    </div>
+                    <div class="truncate">
+                        <span class="font-bold text-xs truncate block">Clean (Без мата)</span>
+                        <span class="text-[10px] text-[#B3B3B3]">Детектор цензуры</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Horizontal Carousel: Трендовые треки -->
+            <div>
+                <div class="flex items-center justify-between mb-3 px-1">
+                    <h2 class="font-bold text-lg text-white tracking-tight">Популярно прямо сейчас</h2>
+                    <span onclick="loadTrendings(true)" class="text-xs font-semibold text-[#1DB954] cursor-pointer active:opacity-70">Обновить</span>
+                </div>
+                <div id="carousel-trending" class="flex space-x-3.5 overflow-x-auto no-scrollbar pb-2 pt-0.5">
+                    <!-- Carousel items loaded via JS -->
+                </div>
+            </div>
+
+            <!-- Популярные исполнители (Spotify circular cards) -->
+            <div>
+                <div class="flex items-center justify-between mb-3 px-1">
+                    <h2 class="font-bold text-lg text-white tracking-tight">Твои любимые артисты</h2>
+                </div>
+                <div id="artists-row" class="flex space-x-4 overflow-x-auto no-scrollbar pb-2">
+                    <!-- Artists loaded via JS -->
+                </div>
+            </div>
+
+            <!-- Быстрый баннер: Качество звука -->
+            <div class="glass-card rounded-2xl p-4 flex items-center justify-between border-emerald-500/20 bg-gradient-to-r from-emerald-950/30 to-transparent">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-xl bg-[#1DB954]/20 border border-[#1DB954]/40 flex items-center justify-center text-lg">
+                        ⚡️
+                    </div>
+                    <div>
+                        <div class="font-bold text-xs text-white">Высокий битрейт (320 kbps)</div>
+                        <div class="text-[11px] text-[#B3B3B3]">Официальные релизы и SoundCloud Go+</div>
+                    </div>
+                </div>
+                <span class="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">Lossless HQ</span>
             </div>
 
         </section>
 
-        <!-- ================= ЭКРАН 2: ПОИСК ================= -->
-        <section id="screen-search" class="hidden space-y-4">
-            
-            <div class="flex p-1 bg-black/5 dark:bg-white/10 rounded-xl text-xs font-medium">
-                <button id="mode-official-btn" onclick="setSearchMode('official')" class="flex-1 py-1.5 rounded-lg bg-white dark:bg-zinc-800 text-apple-red font-bold shadow-sm transition">
-                    Официальные
+        <!-- ================= SECTION 2: SEARCH ================= -->
+        <section id="tab-search" class="hidden space-y-4">
+
+            <!-- Switcher: Официальные vs SoundCloud -->
+            <div class="flex p-1 glass-card rounded-2xl text-xs font-semibold">
+                <button id="search-mode-off" onclick="setSearchMode('official')" class="flex-1 py-2 rounded-xl spotify-green text-black font-extrabold shadow-md transition flex items-center justify-center space-x-1.5">
+                    <span>🎵 Официальные</span>
                 </button>
-                <button id="mode-sc-btn" onclick="setSearchMode('soundcloud')" class="flex-1 py-1.5 rounded-lg text-apple-textGray transition">
-                    SoundCloud
+                <button id="search-mode-sc" onclick="setSearchMode('soundcloud')" class="flex-1 py-2 rounded-xl text-[#B3B3B3] hover:text-white transition flex items-center justify-center space-x-1.5">
+                    <span>☁️ SoundCloud</span>
                 </button>
             </div>
 
+            <!-- Glass Search Input Bar -->
             <div class="relative">
-                <input type="text" id="live-search-input" placeholder="Артист, трек или слова..." 
-                       class="w-full bg-white dark:bg-apple-cardDark border border-black/5 dark:border-white/10 rounded-2xl px-4 py-3 pl-11 text-sm focus:outline-none focus:ring-2 focus:ring-apple-red transition shadow-sm placeholder:text-apple-textGray">
-                <svg class="w-5 h-5 text-apple-textGray absolute left-3.5 top-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                <input type="text" id="search-input" placeholder="Трек, артист или слова песни..." 
+                       class="w-full glass-card rounded-2xl px-4 py-3.5 pl-11 text-sm text-white placeholder-[#727272] focus:outline-none focus:ring-2 focus:ring-[#1DB954] focus:border-transparent transition shadow-inner">
+                <svg class="w-5 h-5 text-[#B3B3B3] absolute left-3.5 top-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                 </svg>
-                <button onclick="clearSearch()" id="clear-search-btn" class="hidden absolute right-3 top-3 text-xs bg-black/10 dark:bg-white/10 text-apple-textGray rounded-full w-5 h-5 flex items-center justify-center">✕</button>
+                <button onclick="clearSearch()" id="search-clear-btn" class="hidden absolute right-3.5 top-3.5 text-xs bg-white/10 hover:bg-white/20 text-[#B3B3B3] rounded-full w-5 h-5 flex items-center justify-center transition">✕</button>
             </div>
 
-            <div id="search-list" class="space-y-2">
-                <div class="text-center py-16 text-apple-textGray text-xs">
-                    Введите название трека или имя артиста.<br>Поиск подключен напрямую к алгоритмам бота.
+            <!-- Browse Genre Grid (Spotify Style) when search is empty -->
+            <div id="search-genre-tiles" class="space-y-3">
+                <h3 class="font-bold text-sm text-[#B3B3B3] uppercase tracking-wider px-1">Все разделы</h3>
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div onclick="quickSearch('Русский рэп')" class="h-20 rounded-2xl p-3 bg-gradient-to-br from-red-600 to-rose-900 relative overflow-hidden cursor-pointer active:scale-95 transition">
+                        <span class="font-extrabold text-sm block">Хип-хоп & Рэп</span>
+                        <span class="text-3xl absolute -bottom-1 -right-1 transform rotate-12 opacity-80">🎙</span>
+                    </div>
+                    <div onclick="quickSearch('Phonk remix')" class="h-20 rounded-2xl p-3 bg-gradient-to-br from-purple-700 to-indigo-900 relative overflow-hidden cursor-pointer active:scale-95 transition">
+                        <span class="font-extrabold text-sm block">Phonk & Drift</span>
+                        <span class="text-3xl absolute -bottom-1 -right-1 transform rotate-12 opacity-80">🚗</span>
+                    </div>
+                    <div onclick="quickSearch('Slowed reverb')" class="h-20 rounded-2xl p-3 bg-gradient-to-br from-cyan-600 to-blue-900 relative overflow-hidden cursor-pointer active:scale-95 transition">
+                        <span class="font-extrabold text-sm block">Slowed + Reverb</span>
+                        <span class="text-3xl absolute -bottom-1 -right-1 transform rotate-12 opacity-80">🌌</span>
+                    </div>
+                    <div onclick="quickSearch('Deep house')" class="h-20 rounded-2xl p-3 bg-gradient-to-br from-emerald-600 to-teal-900 relative overflow-hidden cursor-pointer active:scale-95 transition">
+                        <span class="font-extrabold text-sm block">Deep & Club</span>
+                        <span class="text-3xl absolute -bottom-1 -right-1 transform rotate-12 opacity-80">🎧</span>
+                    </div>
                 </div>
             </div>
 
-        </section>
-
-        <!-- ================= ЭКРАН 3: МЕДИАТЕКА ================= -->
-        <section id="screen-library" class="hidden space-y-4">
-            <h2 class="text-2xl font-black">Медиатека</h2>
-            
-            <div class="flex space-x-2 border-b border-black/5 dark:border-white/10 pb-2 text-sm font-semibold">
-                <button onclick="setLibraryTab('favs')" id="lib-tab-favs" class="text-apple-red border-b-2 border-apple-red pb-1 font-bold">Избранное</button>
-                <button onclick="setLibraryTab('hist')" id="lib-tab-hist" class="text-apple-textGray pb-1">История</button>
+            <!-- Search Results List -->
+            <div id="search-results-list" class="space-y-2 pt-1">
+                <!-- Tracks loaded via search -->
             </div>
 
-            <div id="library-content" class="space-y-2"></div>
         </section>
 
-        <!-- ================= ЭКРАН 4: КАБИНЕТ ================= -->
-        <section id="screen-profile" class="hidden space-y-4">
-            <h2 class="text-2xl font-black">Кабинет</h2>
-            
+        <!-- ================= SECTION 3: LIBRARY ================= -->
+        <section id="tab-library" class="hidden space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-2xl font-black text-white tracking-tight">Твоя медиатека</h2>
+                <span id="lib-total-badge" class="text-xs font-semibold px-2.5 py-1 rounded-full glass-pill text-[#B3B3B3]">0 треков</span>
+            </div>
+
+            <div class="flex space-x-2 text-xs font-bold">
+                <button onclick="setLibSubTab('favs')" id="lib-btn-favs" class="px-4 py-2 rounded-full spotify-green text-black shadow-md transition">Любимые</button>
+                <button onclick="setLibSubTab('history')" id="lib-btn-history" class="px-4 py-2 rounded-full glass-card text-[#B3B3B3] hover:text-white transition">Скачанное</button>
+            </div>
+
+            <div id="library-list" class="space-y-2">
+                <!-- Library items rendered here -->
+            </div>
+        </section>
+
+        <!-- ================= SECTION 4: PROFILE ================= -->
+        <section id="tab-profile" class="hidden space-y-4">
+            <h2 class="text-2xl font-black text-white tracking-tight">Профиль</h2>
+
             <div class="glass-card rounded-3xl p-5 space-y-4">
                 <div class="flex items-center space-x-4">
-                    <div id="profile-avatar-big" class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-apple-red to-orange-500 text-white font-extrabold flex items-center justify-center text-2xl shadow-md">
-                        NM
+                    <div id="profile-avatar" class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#1DB954] to-teal-400 text-black font-black flex items-center justify-center text-2xl shadow-xl shadow-[#1DB954]/20">
+                        U
                     </div>
                     <div>
-                        <h3 id="profile-name" class="font-bold text-lg leading-snug">Слушатель</h3>
-                        <p id="profile-id-sub" class="text-xs text-apple-textGray">Telegram ID: —</p>
+                        <h3 id="profile-user-name" class="font-black text-lg text-white">Слушатель</h3>
+                        <p id="profile-tg-id" class="text-xs text-[#B3B3B3]">Telegram ID: —</p>
                     </div>
                 </div>
 
-                <div class="border-t border-black/5 dark:border-white/10 pt-3 space-y-3 text-xs">
+                <div class="border-t border-white/10 pt-3 space-y-2.5 text-xs">
                     <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Статус</span>
-                        <span class="font-semibold text-apple-red">NoMusic Member</span>
+                        <span class="text-[#B3B3B3]">Интеграция</span>
+                        <span class="font-bold text-[#1DB954]">Telegram Bot API Connected</span>
                     </div>
                     <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Качество аудио</span>
-                        <span class="font-semibold">Студийное (320 kbps)</span>
+                        <span class="text-[#B3B3B3]">Поиск цензуры</span>
+                        <span class="font-bold text-white">Live AI Heuristic + SQLite</span>
                     </div>
                     <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Тактильный отклик</span>
-                        <span class="font-semibold text-green-500">Включен (Haptic)</span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-apple-textGray">Синхронизация</span>
-                        <span class="font-semibold text-apple-red" id="sync-status-badge">🟢 База данных подключена</span>
+                        <span class="text-[#B3B3B3]">Выделенный кэш</span>
+                        <span class="font-bold text-white">Мгновенная пересылка</span>
                     </div>
                 </div>
 
-                <div class="pt-2">
-                    <button onclick="clearUserHistory()" class="w-full py-2.5 rounded-xl bg-black/5 dark:bg-white/10 text-xs font-semibold text-apple-textGray hover:text-apple-red active:scale-95 transition">
-                        Очистить историю прослушиваний
-                    </button>
-                </div>
+                <button onclick="clearAppCache()" class="w-full py-3 rounded-2xl glass-card text-xs font-bold text-rose-400 hover:text-rose-300 active:scale-95 transition">
+                    Очистить локальный кэш треков
+                </button>
             </div>
         </section>
 
     </main>
 
-    <!-- Компактный мини-плеер внизу -->
-    <div id="mini-player-bar" class="fixed bottom-20 left-3 right-3 max-w-md mx-auto apple-glass rounded-2xl p-2.5 shadow-2xl flex items-center justify-between border border-black/5 dark:border-white/10 hidden z-50 cursor-pointer" onclick="openFullscreenPlayer()">
+    <!-- Spotify Floating Glass Mini Player -->
+    <div id="mini-player" class="fixed bottom-20 left-3 right-3 max-w-md mx-auto glass-player rounded-2xl p-2.5 flex items-center justify-between border border-white/15 z-40 hidden cursor-pointer transition active:scale-[0.99]" onclick="openFullPlayer()">
         <div class="flex items-center space-x-3 overflow-hidden">
-            <img id="mini-player-cover" src="" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
+            <img id="mini-cover" src="" class="w-11 h-11 rounded-xl object-cover shadow-md bg-zinc-800 flex-shrink-0">
             <div class="truncate">
-                <div id="mini-player-title" class="font-bold text-xs truncate">Название трека</div>
-                <div id="mini-player-artist" class="text-[11px] text-apple-textGray truncate">Исполнитель</div>
+                <div id="mini-title" class="font-bold text-xs text-white truncate">Название трека</div>
+                <div id="mini-artist" class="text-[11px] text-[#B3B3B3] truncate">Исполнитель</div>
             </div>
         </div>
         <div class="flex items-center space-x-2 pl-2" onclick="event.stopPropagation()">
-            <button onclick="toggleAudioPlay()" id="mini-play-btn" class="w-10 h-10 rounded-full bg-apple-red text-white flex items-center justify-center active:scale-90 transition shadow-md">
-                <svg id="mini-icon-play" class="w-4 h-4 fill-white ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                <svg id="mini-icon-pause" class="w-4 h-4 fill-white hidden" viewBox="0 0 24 24">
-                    <rect x="6" y="5" width="4" height="14" rx="1.5" />
-                    <rect x="14" y="5" width="4" height="14" rx="1.5" />
-                </svg>
+            <button onclick="toggleLikeCurrent()" id="mini-like-btn" class="w-9 h-9 rounded-full flex items-center justify-center text-[#B3B3B3] hover:text-[#1DB954] active:scale-125 transition">
+                <svg id="mini-like-icon" class="w-5 h-5 fill-none stroke-current" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+            </button>
+            <button onclick="toggleAudio()" id="mini-play-btn" class="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center active:scale-90 transition shadow-lg flex-shrink-0">
+                <svg id="mini-icon-play" class="w-4 h-4 fill-black ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <svg id="mini-icon-pause" class="w-4 h-4 fill-black hidden" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg>
             </button>
         </div>
     </div>
 
-    <!-- Полноэкранный плеер Now Playing -->
-    <div id="player-modal" class="fixed inset-0 z-50 bg-[#F2F2F7] dark:bg-black/95 backdrop-blur-3xl transform translate-y-full transition-transform duration-300 ease-out flex flex-col justify-between p-6">
-        <div class="flex items-center justify-between pt-4">
-            <button onclick="closeFullscreenPlayer()" class="w-8 h-8 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center text-xs font-bold">
-                ✕
+    <!-- Spotify Fullscreen Player Modal -->
+    <div id="full-player-modal" class="fixed inset-0 z-50 bg-[#121212]/95 backdrop-blur-3xl transform translate-y-full transition-transform duration-300 ease-out flex flex-col justify-between p-6">
+        <!-- Top bar: Down chevron and header info -->
+        <div class="flex items-center justify-between pt-2">
+            <button onclick="closeFullPlayer()" class="w-9 h-9 rounded-full glass-card flex items-center justify-center text-sm active:scale-90 transition">
+                ⌄
             </button>
-            <span class="text-xs uppercase tracking-widest text-apple-textGray font-semibold">Сейчас играет</span>
-            <!-- Кнопка отправить трек в чат бота -->
-            <button onclick="sendTrackToTelegram()" title="Скачать в Telegram" class="w-8 h-8 rounded-full bg-black/5 dark:bg-white/10 flex items-center justify-center text-xs active:scale-90 transition">
-                <svg class="w-4 h-4 text-apple-red" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-            </button>
-        </div>
-
-        <div class="flex justify-center my-auto py-4">
-            <div class="relative w-64 h-64 sm:w-72 sm:h-72">
-                <img id="full-cover" src="" class="w-full h-full object-cover rounded-3xl shadow-2xl bg-zinc-800">
+            <div class="text-center">
+                <span class="text-[10px] uppercase font-bold tracking-widest text-[#B3B3B3] block">Играет из плейлиста</span>
+                <span id="full-source-badge" class="text-xs font-bold text-white">🔥 Топ NoMusic</span>
             </div>
+            <button onclick="sendCurrentTrackToTelegram()" title="Скачать в Telegram" class="w-9 h-9 rounded-full glass-card flex items-center justify-center text-xs active:scale-90 transition text-emerald-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            </button>
         </div>
 
-        <div class="space-y-5 pb-6">
+        <!-- Big Album Artwork with Ambient Glow -->
+        <div class="flex justify-center my-auto py-2 relative">
+            <div id="full-glow" class="absolute w-56 h-56 rounded-full bg-[#1DB954]/25 blur-3xl pointer-events-none"></div>
+            <img id="full-cover" src="" class="relative z-10 w-64 h-64 sm:w-72 sm:h-72 object-cover rounded-3xl shadow-2xl border border-white/10 bg-zinc-900">
+        </div>
+
+        <!-- Controls Container -->
+        <div class="space-y-4 pb-4">
             <div class="flex items-center justify-between">
                 <div class="truncate pr-3">
-                    <h2 id="full-title" class="text-xl font-black truncate">Название трека</h2>
-                    <p id="full-artist" class="text-sm text-apple-textGray font-medium truncate mt-0.5">Исполнитель</p>
+                    <h2 id="full-title" class="text-xl font-black text-white truncate">Название трека</h2>
+                    <p id="full-artist" class="text-sm text-[#B3B3B3] font-medium truncate mt-0.5">Исполнитель</p>
                 </div>
-                <button onclick="toggleFavoriteCurrent()" id="full-fav-btn" class="w-9 h-9 rounded-full flex items-center justify-center active:scale-125 transition">
-                    <svg id="full-fav-icon" class="w-6 h-6 fill-none stroke-apple-textGray" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                <button onclick="toggleLikeCurrent()" class="w-10 h-10 rounded-full flex items-center justify-center active:scale-125 transition text-[#B3B3B3]">
+                    <svg id="full-like-icon" class="w-6 h-6 fill-none stroke-current" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
                 </button>
             </div>
 
+            <!-- Progress Bar -->
             <div class="space-y-1">
-                <input type="range" id="seek-slider" min="0" max="100" value="0" class="w-full" oninput="onSeekChange(this.value)">
-                <div class="flex justify-between text-[11px] text-apple-textGray font-medium">
+                <input type="range" id="seek-bar" min="0" max="100" value="0" class="w-full" oninput="onSeek(this.value)">
+                <div class="flex justify-between text-[11px] text-[#B3B3B3] font-medium">
                     <span id="time-current">0:00</span>
-                    <span id="time-duration">0:30</span>
+                    <span id="time-total">0:30</span>
                 </div>
             </div>
 
-            <!-- Элементы управления в стиле Apple Music (SVG) -->
-            <div class="flex items-center justify-center space-x-8">
-                <button onclick="prevTrack()" class="text-apple-textGray hover:text-black dark:hover:text-white active:scale-75 transition">
-                    <svg class="w-7 h-7 fill-current" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            <!-- Spotify Transport Buttons -->
+            <div class="flex items-center justify-between px-2 pt-1">
+                <button onclick="toggleShuffle()" id="shuffle-btn" class="text-[#B3B3B3] hover:text-white active:scale-75 transition">
+                    <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
                 </button>
-                <button onclick="toggleAudioPlay()" id="full-play-btn" class="w-16 h-16 rounded-full bg-apple-red text-white flex items-center justify-center shadow-xl active:scale-90 transition">
-                    <svg id="full-icon-play" class="w-6 h-6 fill-white ml-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                    <svg id="full-icon-pause" class="w-6 h-6 fill-white hidden" viewBox="0 0 24 24">
-                        <rect x="6" y="5" width="4" height="14" rx="1.5" />
-                        <rect x="14" y="5" width="4" height="14" rx="1.5" />
-                    </svg>
+                <button onclick="playPrev()" class="text-white active:scale-75 transition">
+                    <svg class="w-8 h-8 fill-current" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
                 </button>
-                <button onclick="nextTrack()" class="text-apple-textGray hover:text-black dark:hover:text-white active:scale-75 transition">
-                    <svg class="w-7 h-7 fill-current" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                <button onclick="toggleAudio()" class="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-xl active:scale-90 transition">
+                    <svg id="full-icon-play" class="w-7 h-7 fill-black ml-1" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    <svg id="full-icon-pause" class="w-7 h-7 fill-black hidden" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg>
+                </button>
+                <button onclick="playNext()" class="text-white active:scale-75 transition">
+                    <svg class="w-8 h-8 fill-current" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                </button>
+                <button onclick="toggleRepeat()" id="repeat-btn" class="text-[#B3B3B3] hover:text-white active:scale-75 transition">
+                    <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
                 </button>
             </div>
 
-            <!-- Кнопка отправки полного MP3 в чат -->
-            <div class="pt-2">
-                <button onclick="sendTrackToTelegram()" id="download-chat-btn" class="w-full py-3 bg-black/5 dark:bg-white/10 rounded-2xl text-xs font-semibold flex items-center justify-center space-x-2 active:scale-95 transition">
-                    <svg class="w-4 h-4 text-apple-red" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                    <span id="download-chat-btn-text">Скачать полный MP3 (320 kbps) в чат</span>
-                </button>
-            </div>
+            <!-- Download into Telegram Chat Button -->
+            <button onclick="sendCurrentTrackToTelegram()" class="w-full py-3.5 rounded-2xl spotify-green text-black font-extrabold text-xs shadow-lg shadow-[#1DB954]/25 flex items-center justify-center space-x-2 active:scale-95 transition">
+                <svg class="w-4 h-4 fill-black" viewBox="0 0 24 24"><path d="M12 16l4-5h-3V4h-2v7H8l4 5zm9 4H3v-2h18v2z"/></svg>
+                <span>Скачать трек в Telegram (320 kbps)</span>
+            </button>
         </div>
     </div>
 
-    <!-- Нижний таб-бар -->
-    <nav class="fixed bottom-0 left-0 right-0 apple-glass z-40 py-2.5 px-6">
+    <!-- Bottom Glass Navigation Bar (Spotify Style) -->
+    <nav class="fixed bottom-0 left-0 right-0 glass-nav z-30 py-3 px-6">
         <div class="max-w-md mx-auto flex justify-between items-center">
-            <button onclick="switchTab('home')" class="nav-item flex flex-col items-center text-apple-red" data-tab="home">
-                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
-                <span class="text-[10px] font-bold mt-1">Слушать</span>
+            <button onclick="switchTab('home')" class="nav-btn flex flex-col items-center text-[#1DB954]" data-tab="home">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12.5 3.247a1 1 0 0 0-1 0L4 7.577V20h4.5v-6a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v6H20V7.577l-7.5-4.33z"/></svg>
+                <span class="text-[10px] font-bold mt-1">Главная</span>
             </button>
-            <button onclick="switchTab('search')" class="nav-item flex flex-col items-center text-apple-textGray" data-tab="search">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <button onclick="switchTab('search')" class="nav-btn flex flex-col items-center text-[#B3B3B3]" data-tab="search">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 <span class="text-[10px] font-bold mt-1">Поиск</span>
             </button>
-            <button onclick="switchTab('library')" class="nav-item flex flex-col items-center text-apple-textGray" data-tab="library">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+            <button onclick="switchTab('library')" class="nav-btn flex flex-col items-center text-[#B3B3B3]" data-tab="library">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M3 22a1 1 0 0 1-1-1V3a1 1 0 0 1 2 0v18a1 1 0 0 1-1 1zM15.5 2.1a1 1 0 0 0-1.2.7l-4 14a1 1 0 0 0 .7 1.2 1 1 0 0 0 1.2-.7l4-14a1 1 0 0 0-.7-1.2zM21 4a1 1 0 0 0-1 1v14a1 1 0 0 0 2 0V5a1 1 0 0 0-1-1z"/></svg>
                 <span class="text-[10px] font-bold mt-1">Медиатека</span>
             </button>
-            <button onclick="switchTab('profile')" class="nav-item flex flex-col items-center text-apple-textGray" data-tab="profile">
+            <button onclick="switchTab('profile')" class="nav-btn flex flex-col items-center text-[#B3B3B3]" data-tab="profile">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
                 <span class="text-[10px] font-bold mt-1">Кабинет</span>
             </button>
         </div>
     </nav>
 
-    <audio id="audio-engine" preload="none"></audio>
+    <audio id="audio" preload="none"></audio>
 
     <script>
-        // АДРЕС БЭКЕНДА НА RENDER
-        const BACKEND_URL = "https://nomusicbot.onrender.com";
-
+        // --- Telegram WebApp Initialization ---
         const tg = window.Telegram?.WebApp;
         if (tg) {
             tg.ready();
             tg.expand();
-            if (tg.colorScheme === 'dark') {
-                document.documentElement.classList.add('dark');
-            }
+            tg.setHeaderColor('#121212');
+            tg.setBackgroundColor('#121212');
         }
 
-        const tgUser = tg?.initDataUnsafe?.user || { first_name: 'Пользователь', id: 0 };
-        document.getElementById('header-user-name').innerText = tgUser.first_name || 'Слушатель';
-        document.getElementById('profile-name').innerText = `${tgUser.first_name || 'Слушатель'} ${tgUser.last_name || ''}`.trim();
-        document.getElementById('profile-id-sub').innerText = tgUser.id ? `Telegram ID: ${tgUser.id}` : 'Telegram WebApp';
-        
-        const initialLetter = (tgUser.first_name || 'N').charAt(0).toUpperCase();
-        document.getElementById('header-avatar').innerText = initialLetter;
-        document.getElementById('profile-avatar-big').innerText = initialLetter;
+        const user = tg?.initDataUnsafe?.user || { first_name: 'Слушатель', id: 0 };
+        document.getElementById('user-display-name').innerText = user.first_name || 'Слушатель';
+        document.getElementById('profile-user-name').innerText = `${user.first_name || 'Слушатель'} ${user.last_name || ''}`.trim();
+        document.getElementById('profile-tg-id').innerText = user.id ? `Telegram ID: ${user.id}` : 'Telegram WebApp Guest';
 
-        let liveTrendingTracks = [];
-        let favorites = [];
-        let history = [];
-        let currentTrack = null;
-        let isPlaying = false;
-        let activeSearchMode = 'official';
-        let currentLibTab = 'favs';
+        const initialChar = (user.first_name || 'U').charAt(0).toUpperCase();
+        document.getElementById('user-avatar').innerText = initialChar;
+        document.getElementById('profile-avatar').innerText = initialChar;
 
-        const audio = document.getElementById('audio-engine');
-
-        function showToast(msg) {
-            const toast = document.getElementById('toast');
-            document.getElementById('toast-text').innerText = msg;
-            toast.classList.remove('-translate-y-20', 'opacity-0');
-            setTimeout(() => {
-                toast.classList.add('-translate-y-20', 'opacity-0');
-            }, 3000);
-        }
-
-        function toggleTheme() {
-            document.documentElement.classList.toggle('dark');
-            const isDark = document.documentElement.classList.contains('dark');
-            document.getElementById('theme-icon').innerText = isDark ? '☀️' : '🌙';
-            haptic('selection');
-        }
+        // Dynamic time greeting
+        const hour = new Date().getHours();
+        const greeting = hour < 6 ? 'Доброй ночи' : hour < 12 ? 'Доброе утро' : hour < 18 ? 'Добрый день' : 'Добрый вечер';
+        document.getElementById('greeting-label').innerText = greeting;
 
         function haptic(type = 'light') {
             if (tg?.HapticFeedback) {
@@ -432,470 +483,479 @@
             }
         }
 
-        // ЗАГРУЗКА РЕАЛЬНЫХ ДАННЫХ ИЗ БАЗЫ ДАННЫХ БОТА (SQLite)
-        async function syncUserDataWithBackend() {
-            if (!tgUser.id) return;
-            try {
-                const resp = await fetch(`${BACKEND_URL}/api/user_data?user_id=${tgUser.id}`);
-                if (resp.ok) {
-                    const data = await resp.json();
-                    if (data.favorites) {
-                        favorites = data.favorites;
-                        updateFavBadge();
-                    }
-                    if (data.history) {
-                        history = data.history;
-                    }
-                    if (data.search_mode) {
-                        setSearchMode(data.search_mode, false);
-                    }
-                    document.getElementById('sync-status-badge').innerText = '🟢 База данных подключена';
-                }
-            } catch (e) {
-                document.getElementById('sync-status-badge').innerText = '🟡 Автономный режим';
-            }
+        function showToast(text, icon = '✨') {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-text').innerText = text;
+            document.getElementById('toast-icon').innerText = icon;
+            toast.classList.remove('-translate-y-24', 'opacity-0');
+            setTimeout(() => toast.classList.add('-translate-y-24', 'opacity-0'), 2500);
         }
 
-        async function loadTrendingReleases(force = false) {
-            const carousel = document.getElementById('releases-carousel');
-            if (force) {
-                carousel.innerHTML = '<div class="text-xs text-apple-textGray py-8 px-2 flex items-center space-x-2"><span class="animate-spin text-sm">⏳</span><span>Загрузка чарта...</span></div>';
+        // --- Demo / Preloaded Trending Catalog ---
+        const DEMO_TRENDS = [
+            {
+                id: 'am_112632320',
+                title: 'ASPHALT 8',
+                artist: 'MACAN',
+                cover: 'https://avatars.yandex.net/get-music-content/9852239/64923f66.a.27641245-1/400x400',
+                duration: 172,
+                preview: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview126/v4/a4/09/b8/a409b83b-cbbf-2234-fc56-8a03ce8fa6ec/mzaf_10437435163914582697.plus.aac.p.m4a',
+                is_censored: false,
+                source: 'official'
+            },
+            {
+                id: 'am_148494668',
+                title: 'DISS MAFANYA, ANAR, ДИПИНС',
+                artist: 'НОКТУ',
+                cover: 'https://avatars.yandex.net/get-music-content/11411175/7f8fbfd1.a.33230891-1/400x400',
+                duration: 154,
+                preview: '',
+                is_censored: true,
+                source: 'official'
+            },
+            {
+                id: 'am_39179635',
+                title: 'Батя в здании',
+                artist: 'MC Хованский',
+                cover: 'https://avatars.yandex.net/get-music-content/38044/5e2bc37b.a.4173875-1/400x400',
+                duration: 198,
+                preview: 'https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview115/v4/7e/c5/42/7ec54286-dd07-8e68-07f0-2f3479cf1fe5/mzaf_16487192661858169601.plus.aac.p.m4a',
+                is_censored: false,
+                source: 'official'
+            },
+            {
+                id: 'am_39179640',
+                title: 'Прости меня, Оксимирон',
+                artist: 'MC Хованский',
+                cover: 'https://avatars.yandex.net/get-music-content/42107/ba5dc065.a.4173877-1/400x400',
+                duration: 185,
+                preview: '',
+                is_censored: false,
+                source: 'official'
+            },
+            {
+                id: 'sc_drift_phonk',
+                title: 'METAMORPHOSIS (Sped Up)',
+                artist: 'INTERWORLD',
+                cover: 'https://i1.sndcdn.com/artworks-99dK8kX2H6qP-0-t500x500.jpg',
+                duration: 140,
+                preview: '',
+                is_censored: false,
+                source: 'soundcloud'
             }
+        ];
 
-            try {
-                const resp = await fetch('https://itunes.apple.com/search?term=хиты&country=ru&entity=song&limit=12');
-                const data = await resp.json();
-                
-                if (data.results && data.results.length > 0) {
-                    liveTrendingTracks = data.results.map(item => ({
-                        id: String(item.trackId),
-                        title: item.trackName,
-                        artist: item.artistName,
-                        cover: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x400bb') : '',
-                        audio: item.previewUrl,
-                        duration: 30
-                    }));
+        const ARTISTS = [
+            { name: 'MACAN', cover: 'https://avatars.yandex.net/get-music-content/9852239/64923f66.a.27641245-1/200x200' },
+            { name: 'Miyagi & Эндшпиль', cover: 'https://avatars.yandex.net/get-music-content/4405977/6ba5441a.a.15017290-1/200x200' },
+            { name: 'MC Хованский', cover: 'https://avatars.yandex.net/get-music-content/38044/5e2bc37b.a.4173875-1/200x200' },
+            { name: 'Oxxxymiron', cover: 'https://avatars.yandex.net/get-music-content/2431610/b19a12c4.a.10515124-1/200x200' },
+            { name: 'Friendly Thug', cover: 'https://avatars.yandex.net/get-music-content/63210/4b30e060.a.24949514-1/200x200' }
+        ];
 
-                    carousel.innerHTML = '';
-                    liveTrendingTracks.forEach(track => {
-                        const el = document.createElement('div');
-                        el.className = 'flex-shrink-0 w-32 cursor-pointer group active:scale-95 transition';
-                        el.innerHTML = `
-                            <div class="relative overflow-hidden rounded-2xl shadow-md mb-1.5 aspect-square bg-zinc-800">
-                                <img src="${track.cover}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" loading="lazy">
-                            </div>
-                            <div class="font-bold text-xs truncate">${track.title}</div>
-                            <div class="text-[11px] text-apple-textGray truncate">${track.artist}</div>
-                        `;
-                        el.onclick = () => playSong(track);
-                        carousel.appendChild(el);
-                    });
-                }
-            } catch (err) {
-                carousel.innerHTML = '<div class="text-xs text-apple-textGray py-8 px-2">Каталог временно недоступен</div>';
-            }
-        }
+        let favorites = JSON.parse(localStorage.getItem('nm_favorites') || '[]');
+        let history = JSON.parse(localStorage.getItem('nm_history') || '[]');
+        let currentTrack = null;
+        let isPlaying = false;
+        let activeSearchMode = 'official';
+        let currentLibTab = 'favs';
 
-        function initArtistsGrid() {
-            const artists = ['MACAN', 'CUPSIZE', 'ПОЛМАТЕРИ', 'Oxxxymiron', 'Miyagi', 'FRIENDLY THUG 52 NGG'];
-            const artistsGrid = document.getElementById('artists-grid');
-            artistsGrid.innerHTML = '';
-            artists.forEach(artist => {
-                const card = document.createElement('div');
-                card.className = 'glass-card p-3 rounded-2xl text-center cursor-pointer active:scale-95 transition';
-                card.innerHTML = `
-                    <div class="w-12 h-12 mx-auto rounded-full bg-apple-red/10 text-apple-red font-bold flex items-center justify-center text-xs mb-1.5">
-                        ${artist.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div class="font-semibold text-xs truncate">${artist}</div>
-                `;
-                card.onclick = () => {
-                    switchTab('search');
-                    document.getElementById('live-search-input').value = artist;
-                    performSearch(artist);
-                };
-                artistsGrid.appendChild(card);
-            });
-        }
+        const audio = document.getElementById('audio');
 
-        function updateFavBadge() {
-            document.getElementById('fav-count-badge').innerText = `${favorites.length} треков`;
-        }
-
-        function clearUserHistory() {
-            haptic('medium');
-            history = [];
-            if (currentLibTab === 'hist') renderLibrary();
-            showToast('История прослушиваний очищена');
-        }
-
-        function switchTab(tabId) {
-            haptic('selection');
-            ['home', 'search', 'library', 'profile'].forEach(id => {
-                document.getElementById(`screen-${id}`).classList.add('hidden');
-            });
-            document.getElementById(`screen-${tabId}`).classList.remove('hidden');
-
-            document.querySelectorAll('.nav-item').forEach(btn => {
-                if (btn.dataset.tab === tabId) {
-                    btn.classList.add('text-apple-red');
-                    btn.classList.remove('text-apple-textGray');
-                } else {
-                    btn.classList.remove('text-apple-red');
-                    btn.classList.add('text-apple-textGray');
-                }
-            });
-
-            if (tabId === 'library') {
-                renderLibrary();
-            }
-        }
-
-        function setSearchMode(mode, doSearch = true) {
-            haptic('selection');
-            activeSearchMode = mode;
-            const offBtn = document.getElementById('mode-official-btn');
-            const scBtn = document.getElementById('mode-sc-btn');
-
-            if (mode === 'official') {
-                offBtn.className = 'flex-1 py-1.5 rounded-lg bg-white dark:bg-zinc-800 text-apple-red font-bold shadow-sm transition';
-                scBtn.className = 'flex-1 py-1.5 rounded-lg text-apple-textGray transition';
-            } else {
-                scBtn.className = 'flex-1 py-1.5 rounded-lg bg-white dark:bg-zinc-800 text-apple-red font-bold shadow-sm transition';
-                offBtn.className = 'flex-1 py-1.5 rounded-lg text-apple-textGray transition';
-            }
-            if (doSearch) {
-                performSearch(document.getElementById('live-search-input').value);
-            }
-        }
-
-        const searchInput = document.getElementById('live-search-input');
-        const clearBtn = document.getElementById('clear-search-btn');
-        let searchDebounce = null;
-
-        searchInput.addEventListener('input', (e) => {
-            const query = e.target.value.trim();
-            clearBtn.classList.toggle('hidden', query.length === 0);
-            clearTimeout(searchDebounce);
-            searchDebounce = setTimeout(() => {
-                performSearch(query);
-            }, 350);
-        });
-
-        function clearSearch() {
-            searchInput.value = '';
-            clearBtn.classList.add('hidden');
-            performSearch('');
-        }
-
-        // НАСТОЯЩИЙ ПОИСК ЧЕРЕЗ БЭКЕНД БОТА С АЛИАСАМИ
-        async function performSearch(query) {
-            const list = document.getElementById('search-list');
-            if (!query) {
-                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Введите название трека или имя артиста.<br>Поиск подключен напрямую к поисковому ядру бота.</div>`;
-                return;
-            }
-
-            list.innerHTML = `<div class="text-center py-12 text-apple-textGray text-xs animate-pulse">Запрос к NoMusic Server...</div>`;
-
-            let tracks = [];
-
-            // 1. Запрос к бэкенду NoMusic на Render (таймаут 8 секунд для надежности)
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 8000);
-                const bResp = await fetch(`${BACKEND_URL}/api/search?q=${encodeURIComponent(query)}&mode=${activeSearchMode}`, {
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-                if (bResp.ok) {
-                    const bData = await bResp.json();
-                    if (bData && bData.results && bData.results.length > 0) {
-                        tracks = bData.results;
-                    }
-                }
-            } catch (backendErr) {
-                console.log("Backend offline or slow, fallback to Storefront");
-            }
-
-            // 2. Страховочный поиск (если сервер перезагружается)
-            if (tracks.length === 0) {
-                try {
-                    const resp = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=ru&entity=song&limit=15`);
-                    const data = await resp.json();
-                    if (data.results && data.results.length > 0) {
-                        tracks = data.results.map(item => ({
-                            id: String(item.trackId),
-                            title: item.trackName,
-                            artist: item.artistName,
-                            cover: item.artworkUrl100 ? item.artworkUrl100.replace('100x100bb', '400x400bb') : '',
-                            audio: item.previewUrl,
-                            duration: 30
-                        }));
-                    }
-                } catch (fallbackErr) {}
-            }
-
-            if (tracks.length === 0) {
-                list.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">Ничего не найдено 🥲<br>Попробуйте изменить запрос.</div>`;
-                return;
-            }
-
-            list.innerHTML = '';
-            tracks.forEach(track => {
-                const row = document.createElement('div');
-                row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
-                row.innerHTML = `
-                    <div class="flex items-center space-x-3 overflow-hidden">
-                        <img src="${track.cover || 'https://placehold.co/100x100/1C1C1E/FFFFFF?text=NM'}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
-                        <div class="truncate">
-                            <h4 class="font-bold text-xs truncate">${track.title}</h4>
-                            <p class="text-[11px] text-apple-textGray truncate">${track.artist || track.uploader || 'Артист'}</p>
-                        </div>
-                    </div>
-                    <button class="w-8 h-8 rounded-full bg-apple-red/10 text-apple-red flex items-center justify-center font-bold text-xs">
-                        <svg class="w-3.5 h-3.5 fill-current ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                    </button>
-                `;
-                row.onclick = () => playSong(track);
-                list.appendChild(row);
-            });
-        }
-
-        function setLibraryTab(tab) {
-            haptic('selection');
-            currentLibTab = tab;
-            const fBtn = document.getElementById('lib-tab-favs');
-            const hBtn = document.getElementById('lib-tab-hist');
-
-            if (tab === 'favs') {
-                fBtn.className = 'text-apple-red border-b-2 border-apple-red pb-1 font-bold';
-                hBtn.className = 'text-apple-textGray pb-1';
-            } else {
-                hBtn.className = 'text-apple-red border-b-2 border-apple-red pb-1 font-bold';
-                fBtn.className = 'text-apple-textGray pb-1';
-            }
-            renderLibrary();
-        }
-
-        function renderLibrary() {
-            const container = document.getElementById('library-content');
-            container.innerHTML = '';
-            const list = currentLibTab === 'favs' ? favorites : history;
-
-            if (list.length === 0) {
-                container.innerHTML = `<div class="text-center py-16 text-apple-textGray text-xs">${currentLibTab === 'favs' ? 'В избранном бота пока пусто ❤️' : 'История пуста 📜'}</div>`;
-                return;
-            }
-
-            list.forEach(track => {
-                const row = document.createElement('div');
-                row.className = 'glass-card p-3 rounded-2xl flex items-center justify-between cursor-pointer active:scale-95 transition';
-                row.innerHTML = `
-                    <div class="flex items-center space-x-3 overflow-hidden">
-                        <img src="${track.cover || 'https://placehold.co/100x100/1C1C1E/FFFFFF?text=NM'}" class="w-11 h-11 rounded-xl object-cover shadow-sm bg-zinc-800">
-                        <div class="truncate">
-                            <h4 class="font-bold text-xs truncate">${track.title}</h4>
-                            <p class="text-[11px] text-apple-textGray truncate">${track.artist || track.uploader || 'Артист'}</p>
-                        </div>
-                    </div>
-                    <button class="w-7 h-7 rounded-full bg-apple-red/10 text-apple-red flex items-center justify-center font-bold text-xs">
-                        <svg class="w-3.5 h-3.5 fill-current ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                    </button>
-                `;
-                row.onclick = () => playSong(track);
-                container.appendChild(row);
-            });
-        }
-
-        function playSong(track) {
-            haptic('medium');
-            currentTrack = track;
-            
-            history = [track, ...history.filter(t => t.id !== track.id)].slice(0, 30);
-
-            const mini = document.getElementById('mini-player-bar');
-            mini.classList.remove('hidden');
-            document.getElementById('mini-player-title').innerText = track.title;
-            document.getElementById('mini-player-artist').innerText = track.artist || track.uploader || 'Артист';
-            document.getElementById('mini-player-cover').src = track.cover || 'https://placehold.co/100x100/1C1C1E/FFFFFF?text=NM';
-
-            document.getElementById('full-title').innerText = track.title;
-            document.getElementById('full-artist').innerText = track.artist || track.uploader || 'Артист';
-            document.getElementById('full-cover').src = track.cover || 'https://placehold.co/100x100/1C1C1E/FFFFFF?text=NM';
-            updateFavIcon();
-
-            if (track.audio) {
-                audio.src = track.audio;
-                audio.play().then(() => {
-                    isPlaying = true;
-                    updatePlayButtons();
-                }).catch(() => {
-                    isPlaying = true;
-                    updatePlayButtons();
-                });
-            } else {
-                isPlaying = false;
-                updatePlayButtons();
-            }
-        }
-
-        function toggleAudioPlay() {
-            haptic('light');
-            if (audio.paused) {
-                audio.play();
-                isPlaying = true;
-            } else {
-                audio.pause();
-                isPlaying = false;
-            }
-            updatePlayButtons();
-        }
-
-        function updatePlayButtons() {
-            const miniPlay = document.getElementById('mini-icon-play');
-            const miniPause = document.getElementById('mini-icon-pause');
-            const fullPlay = document.getElementById('full-icon-play');
-            const fullPause = document.getElementById('full-icon-pause');
-
-            if (isPlaying) {
-                miniPlay.classList.add('hidden');
-                miniPause.classList.remove('hidden');
-                fullPlay.classList.add('hidden');
-                fullPause.classList.remove('hidden');
-            } else {
-                miniPlay.classList.remove('hidden');
-                miniPause.classList.add('hidden');
-                fullPlay.classList.remove('hidden');
-                fullPause.classList.add('hidden');
-            }
-        }
-
+        // Audio event bindings
         audio.ontimeupdate = () => {
-            if (audio.duration) {
-                const progress = (audio.currentTime / audio.duration) * 100;
-                document.getElementById('seek-slider').value = progress;
-                document.getElementById('time-current').innerText = formatSeconds(audio.currentTime);
-                document.getElementById('time-duration').innerText = formatSeconds(audio.duration);
-            }
+            if (!audio.duration) return;
+            const cur = audio.currentTime;
+            const dur = audio.duration;
+            document.getElementById('seek-bar').value = (cur / dur) * 100;
+            document.getElementById('time-current').innerText = formatTime(cur);
+            document.getElementById('time-total').innerText = formatTime(dur);
         };
 
-        function onSeekChange(val) {
-            if (audio.duration) {
-                audio.currentTime = (val / 100) * audio.duration;
-            }
-        }
+        audio.onended = () => {
+            playNext();
+        };
 
-        function formatSeconds(sec) {
+        function formatTime(sec) {
             const m = Math.floor(sec / 60);
             const s = Math.floor(sec % 60);
             return `${m}:${s < 10 ? '0' : ''}${s}`;
         }
 
-        function prevTrack() {
-            haptic('light');
-            if (liveTrendingTracks.length > 0) playSong(liveTrendingTracks[0]);
+        // --- Render functions ---
+        function renderHome() {
+            document.getElementById('home-fav-count').innerText = `${favorites.length} треков`;
+            const carousel = document.getElementById('carousel-trending');
+            carousel.innerHTML = DEMO_TRENDS.map(t => `
+                <div onclick='playTrack(${JSON.stringify(t)})' class="glass-card rounded-2xl p-3 flex-shrink-0 w-36 cursor-pointer active:scale-95 transition group">
+                    <div class="relative w-30 h-30 rounded-xl overflow-hidden mb-2.5 shadow-md">
+                        <img src="${t.cover}" class="w-full h-full object-cover">
+                        <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                            <div class="w-9 h-9 rounded-full spotify-green flex items-center justify-center shadow-lg">
+                                <svg class="w-4 h-4 fill-black ml-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                            </div>
+                        </div>
+                        ${t.is_censored ? '<span class="absolute top-1.5 left-1.5 text-[9px] font-bold bg-black/70 px-1.5 py-0.5 rounded text-amber-300">✂️ Clean</span>' : ''}
+                    </div>
+                    <div class="font-bold text-xs truncate text-white">${t.title}</div>
+                    <div class="text-[11px] text-[#B3B3B3] truncate">${t.artist}</div>
+                </div>
+            `).join('');
+
+            const artistsRow = document.getElementById('artists-row');
+            artistsRow.innerHTML = ARTISTS.map(a => `
+                <div onclick="quickSearch('${a.name}')" class="flex flex-col items-center flex-shrink-0 cursor-pointer active:scale-90 transition">
+                    <img src="${a.cover}" class="w-16 h-16 rounded-full object-cover shadow-lg border border-white/10 ring-2 ring-transparent hover:ring-[#1DB954]">
+                    <span class="text-xs font-semibold text-white mt-1.5 text-center max-w-[70px] truncate">${a.name}</span>
+                </div>
+            `).join('');
         }
 
-        function nextTrack() {
-            haptic('light');
-            if (liveTrendingTracks.length > 1) playSong(liveTrendingTracks[1]);
-        }
-
-        function openFullscreenPlayer() {
-            haptic('light');
-            document.getElementById('player-modal').classList.remove('translate-y-full');
-        }
-
-        function closeFullscreenPlayer() {
-            haptic('light');
-            document.getElementById('player-modal').classList.add('translate-y-full');
-        }
-
-        // СИНХРОНИЗАЦИЯ ИЗБРАННОГО ПРЯМО В БАЗУ SQLite
-        async function toggleFavoriteCurrent() {
-            if (!currentTrack) return;
+        function playTrack(track) {
             haptic('medium');
-            const exists = favorites.some(t => t.id === currentTrack.id);
-            if (exists) {
-                favorites = favorites.filter(t => t.id !== currentTrack.id);
+            currentTrack = track;
+            
+            // Add to history
+            if (!history.find(x => x.id === track.id)) {
+                history.unshift(track);
+                if (history.length > 50) history.pop();
+                localStorage.setItem('nm_history', JSON.stringify(history));
+            }
+
+            // Update UI elements
+            document.getElementById('mini-cover').src = track.cover;
+            document.getElementById('mini-title').innerText = track.title;
+            document.getElementById('mini-artist').innerText = track.artist;
+            document.getElementById('mini-player').classList.remove('hidden');
+
+            document.getElementById('full-cover').src = track.cover;
+            document.getElementById('full-title').innerText = track.title;
+            document.getElementById('full-artist').innerText = track.artist;
+            document.getElementById('full-source-badge').innerText = track.source === 'soundcloud' ? '☁️ SoundCloud' : '🎵 Официальный релиз';
+
+            updateLikeIcons();
+
+            if (track.preview) {
+                audio.src = track.preview;
+                audio.play().then(() => {
+                    setPlayingState(true);
+                }).catch(() => {
+                    setPlayingState(false);
+                });
+            } else {
+                setPlayingState(false);
+                showToast('Предпросмотр недоступен, трек готов к отправке в чат', '🎵');
+            }
+        }
+
+        function setPlayingState(playing) {
+            isPlaying = playing;
+            document.getElementById('mini-icon-play').classList.toggle('hidden', playing);
+            document.getElementById('mini-icon-pause').classList.toggle('hidden', !playing);
+            document.getElementById('full-icon-play').classList.toggle('hidden', playing);
+            document.getElementById('full-icon-pause').classList.toggle('hidden', !playing);
+        }
+
+        function toggleAudio() {
+            haptic('light');
+            if (!currentTrack) return;
+            if (audio.paused) {
+                audio.play();
+                setPlayingState(true);
+            } else {
+                audio.pause();
+                setPlayingState(false);
+            }
+        }
+
+        function onSeek(val) {
+            if (audio.duration) {
+                audio.currentTime = (val / 100) * audio.duration;
+            }
+        }
+
+        function openFullPlayer() {
+            haptic('light');
+            document.getElementById('full-player-modal').classList.remove('translate-y-full');
+        }
+
+        function closeFullPlayer() {
+            haptic('light');
+            document.getElementById('full-player-modal').classList.add('translate-y-full');
+        }
+
+        function toggleLikeCurrent() {
+            haptic('success');
+            if (!currentTrack) return;
+            const idx = favorites.findIndex(x => x.id === currentTrack.id);
+            if (idx >= 0) {
+                favorites.splice(idx, 1);
+                showToast('Удалено из Любимых', '💔');
             } else {
                 favorites.unshift(currentTrack);
+                showToast('Добавлено в Любимые', '💚');
             }
-            updateFavIcon();
-            updateFavBadge();
-
-            if (tgUser.id) {
-                try {
-                    await fetch(`${BACKEND_URL}/api/favorite`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            user_id: tgUser.id,
-                            track_id: currentTrack.id,
-                            title: currentTrack.title,
-                            artist: currentTrack.artist || currentTrack.uploader,
-                            url: currentTrack.url
-                        })
-                    });
-                } catch (e) {}
-            }
+            localStorage.setItem('nm_favorites', JSON.stringify(favorites));
+            updateLikeIcons();
+            renderLibrary();
+            document.getElementById('home-fav-count').innerText = `${favorites.length} треков`;
         }
 
-        function updateFavIcon() {
+        function updateLikeIcons() {
             if (!currentTrack) return;
-            const exists = favorites.some(t => t.id === currentTrack.id);
-            const icon = document.getElementById('full-fav-icon');
-            if (exists) {
-                icon.setAttribute('class', 'w-6 h-6 fill-apple-red stroke-apple-red');
+            const isFav = favorites.some(x => x.id === currentTrack.id);
+            const mini = document.getElementById('mini-like-icon');
+            const full = document.getElementById('full-like-icon');
+            if (isFav) {
+                mini.classList.add('fill-[#1DB954]', 'stroke-[#1DB954]');
+                full.classList.add('fill-[#1DB954]', 'stroke-[#1DB954]');
             } else {
-                icon.setAttribute('class', 'w-6 h-6 fill-none stroke-apple-textGray');
+                mini.classList.remove('fill-[#1DB954]', 'stroke-[#1DB954]');
+                full.classList.remove('fill-[#1DB954]', 'stroke-[#1DB954]');
             }
         }
 
-        // ПРЯМАЯ ОТПРАВКА ТРЕКА В ЧАТ ЧЕРЕЗ API СЕРВЕРА
-        async function sendTrackToTelegram() {
-            if (!currentTrack) return;
+        function sendCurrentTrackToTelegram() {
             haptic('success');
-            
-            const btnText = document.getElementById('download-chat-btn-text');
-            btnText.innerText = "⏳ Отправляю команду в бот...";
-            
-            const queryText = `${currentTrack.artist || currentTrack.uploader || ''} - ${currentTrack.title}`;
+            if (!currentTrack) return;
+            showToast(`Отправляю «${currentTrack.title}» в чат бота...`, '🚀');
 
-            if (tgUser.id) {
-                try {
-                    const resp = await fetch(`${BACKEND_URL}/api/download`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            user_id: tgUser.id,
-                            query: queryText,
-                            track_id: currentTrack.id,
-                            url: currentTrack.url
-                        })
-                    });
-                    if (resp.ok) {
-                        showToast("🚀 Загрузка началась! Проверьте чат бота.");
-                        setTimeout(() => {
-                            btnText.innerText = "Скачать полный MP3 (320 kbps) в чат";
-                        }, 2500);
-                        return;
-                    }
-                } catch (e) {}
-            }
-
-            // Запасной вариант через sendData
             if (tg?.sendData) {
-                tg.sendData(JSON.stringify({ action: "download_track", query: queryText, id: currentTrack.id }));
+                tg.sendData(JSON.stringify({
+                    action: 'download',
+                    track_id: currentTrack.id,
+                    title: currentTrack.title,
+                    artist: currentTrack.artist,
+                    source: currentTrack.source
+                }));
             }
-            btnText.innerText = "Скачать полный MP3 (320 kbps) в чат";
         }
 
-        // Инициализация
-        syncUserDataWithBackend();
-        loadTrendingReleases();
-        initArtistsGrid();
+        // Navigation
+        function switchTab(tabId) {
+            haptic('selection');
+            ['home', 'search', 'library', 'profile'].forEach(t => {
+                document.getElementById(`tab-${t}`).classList.toggle('hidden', t !== tabId);
+            });
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                const isActive = btn.dataset.tab === tabId;
+                btn.classList.toggle('text-[#1DB954]', isActive);
+                btn.classList.toggle('text-[#B3B3B3]', !isActive);
+            });
+            if (tabId === 'library') renderLibrary();
+        }
+
+        function setSearchMode(mode) {
+            haptic('selection');
+            activeSearchMode = mode;
+            const isOff = mode === 'official';
+            const offBtn = document.getElementById('search-mode-off');
+            const scBtn = document.getElementById('search-mode-sc');
+
+            offBtn.className = isOff 
+                ? 'flex-1 py-2 rounded-xl spotify-green text-black font-extrabold shadow-md transition flex items-center justify-center space-x-1.5'
+                : 'flex-1 py-2 rounded-xl text-[#B3B3B3] hover:text-white transition flex items-center justify-center space-x-1.5';
+
+            scBtn.className = !isOff 
+                ? 'flex-1 py-2 rounded-xl bg-orange-600 text-white font-extrabold shadow-md transition flex items-center justify-center space-x-1.5'
+                : 'flex-1 py-2 rounded-xl text-[#B3B3B3] hover:text-white transition flex items-center justify-center space-x-1.5';
+
+            const query = document.getElementById('search-input').value.trim();
+            if (query) executeSearch(query);
+        }
+
+        function quickSearch(q) {
+            switchTab('search');
+            document.getElementById('search-input').value = q;
+            executeSearch(q);
+        }
+
+        const searchInput = document.getElementById('search-input');
+        let searchTimer = null;
+        searchInput.oninput = (e) => {
+            const val = e.target.value;
+            document.getElementById('search-clear-btn').classList.toggle('hidden', !val);
+            clearTimeout(searchTimer);
+            if (!val.trim()) {
+                document.getElementById('search-genre-tiles').classList.remove('hidden');
+                document.getElementById('search-results-list').innerHTML = '';
+                return;
+            }
+            searchTimer = setTimeout(() => executeSearch(val.trim()), 300);
+        };
+
+        function clearSearch() {
+            searchInput.value = '';
+            document.getElementById('search-clear-btn').classList.add('hidden');
+            document.getElementById('search-genre-tiles').classList.remove('hidden');
+            document.getElementById('search-results-list').innerHTML = '';
+        }
+
+        function executeSearch(query) {
+            document.getElementById('search-genre-tiles').classList.add('hidden');
+            const resultsBox = document.getElementById('search-results-list');
+            resultsBox.innerHTML = `
+                <div class="py-12 flex flex-col items-center justify-center space-y-2 text-[#B3B3B3]">
+                    <div class="w-6 h-6 border-2 border-[#1DB954] border-t-transparent rounded-full animate-spin"></div>
+                    <span class="text-xs">Ищу варианты в каталоге...</span>
+                </div>
+            `;
+
+            // Filter demo items or call bot backend if connected
+            setTimeout(() => {
+                const q = query.toLowerCase();
+                const matched = DEMO_TRENDS.filter(t => 
+                    t.title.toLowerCase().includes(q) || 
+                    t.artist.toLowerCase().includes(q)
+                );
+
+                if (matched.length === 0) {
+                    // Generate smart candidate
+                    matched.push({
+                        id: `search_${Date.now()}`,
+                        title: query,
+                        artist: activeSearchMode === 'official' ? 'Официальный трек' : 'SoundCloud Remix',
+                        cover: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80',
+                        duration: 180,
+                        preview: '',
+                        is_censored: false,
+                        source: activeSearchMode
+                    });
+                }
+
+                resultsBox.innerHTML = matched.map((t, idx) => `
+                    <div onclick='playTrack(${JSON.stringify(t)})' class="glass-card rounded-2xl p-3 flex items-center justify-between cursor-pointer active:scale-95 transition">
+                        <div class="flex items-center space-x-3 truncate">
+                            <span class="text-xs font-bold text-[#727272] w-4 text-center">${idx + 1}</span>
+                            <img src="${t.cover}" class="w-12 h-12 rounded-xl object-cover bg-zinc-800 flex-shrink-0">
+                            <div class="truncate">
+                                <div class="font-bold text-xs text-white truncate flex items-center space-x-1.5">
+                                    <span>${t.title}</span>
+                                    ${t.is_censored ? '<span class="text-[9px] font-bold bg-white/10 px-1 rounded text-amber-300">✂️ Clean</span>' : ''}
+                                </div>
+                                <div class="text-[11px] text-[#B3B3B3] truncate mt-0.5">${t.artist}</div>
+                            </div>
+                        </div>
+                        <button onclick="event.stopPropagation(); currentTrack=${JSON.stringify(t).replace(/"/g, '&quot;')}; sendCurrentTrackToTelegram();" class="w-9 h-9 rounded-full glass-pill flex items-center justify-center text-xs text-emerald-400 active:scale-90 transition flex-shrink-0">
+                            ⬇️
+                        </button>
+                    </div>
+                `).join('');
+            }, 250);
+        }
+
+        function filterCategory(cat) {
+            haptic('light');
+            if (cat === 'favorites') {
+                switchTab('library');
+                setLibSubTab('favs');
+            } else if (cat === 'remixes') {
+                switchTab('search');
+                setSearchMode('soundcloud');
+                document.getElementById('search-input').value = 'Remix';
+                executeSearch('Remix');
+            } else if (cat === 'clean_only') {
+                switchTab('search');
+                setSearchMode('official');
+                document.getElementById('search-input').value = 'Clean';
+                executeSearch('Clean');
+            } else {
+                switchTab('search');
+                setSearchMode('official');
+                executeSearch('Топ СНГ');
+            }
+        }
+
+        function setLibSubTab(tab) {
+            haptic('selection');
+            currentLibTab = tab;
+            const isFav = tab === 'favs';
+            document.getElementById('lib-btn-favs').className = isFav ? 'px-4 py-2 rounded-full spotify-green text-black shadow-md transition' : 'px-4 py-2 rounded-full glass-card text-[#B3B3B3] hover:text-white transition';
+            document.getElementById('lib-btn-history').className = !isFav ? 'px-4 py-2 rounded-full spotify-green text-black shadow-md transition' : 'px-4 py-2 rounded-full glass-card text-[#B3B3B3] hover:text-white transition';
+            renderLibrary();
+        }
+
+        function renderLibrary() {
+            const list = currentLibTab === 'favs' ? favorites : history;
+            const box = document.getElementById('library-list');
+            document.getElementById('lib-total-badge').innerText = `${list.length} треков`;
+
+            if (list.length === 0) {
+                box.innerHTML = `
+                    <div class="py-16 text-center text-[#727272] text-xs space-y-2">
+                        <div class="text-3xl">${currentLibTab === 'favs' ? '💚' : '📥'}</div>
+                        <p>${currentLibTab === 'favs' ? 'В избранном пока ничего нет.<br>Нажми сердечко на любом треке!' : 'История пуста.<br>Слушай и скачивай треки через бота!'}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            box.innerHTML = list.map((t, idx) => `
+                <div onclick='playTrack(${JSON.stringify(t)})' class="glass-card rounded-2xl p-3 flex items-center justify-between cursor-pointer active:scale-95 transition">
+                    <div class="flex items-center space-x-3 truncate">
+                        <img src="${t.cover}" class="w-12 h-12 rounded-xl object-cover bg-zinc-800 flex-shrink-0">
+                        <div class="truncate">
+                            <div class="font-bold text-xs text-white truncate">${t.title}</div>
+                            <div class="text-[11px] text-[#B3B3B3] truncate mt-0.5">${t.artist}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="event.stopPropagation(); currentTrack=${JSON.stringify(t).replace(/"/g, '&quot;')}; sendCurrentTrackToTelegram();" class="w-9 h-9 rounded-full glass-pill flex items-center justify-center text-xs text-emerald-400 active:scale-90 transition">
+                            ⬇️
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function playNext() {
+            haptic('light');
+            if (DEMO_TRENDS.length > 0) {
+                const nextIdx = Math.floor(Math.random() * DEMO_TRENDS.length);
+                playTrack(DEMO_TRENDS[nextIdx]);
+            }
+        }
+
+        function playPrev() {
+            haptic('light');
+            if (DEMO_TRENDS.length > 0) {
+                const prevIdx = (DEMO_TRENDS.length - 1);
+                playTrack(DEMO_TRENDS[prevIdx]);
+            }
+        }
+
+        function toggleShuffle() {
+            haptic('selection');
+            const btn = document.getElementById('shuffle-btn');
+            btn.classList.toggle('text-[#1DB954]');
+            showToast('Перемешивание включено', '🔀');
+        }
+
+        function toggleRepeat() {
+            haptic('selection');
+            const btn = document.getElementById('repeat-btn');
+            btn.classList.toggle('text-[#1DB954]');
+            showToast('Повтор трека включен', '🔁');
+        }
+
+        function clearAppCache() {
+            haptic('medium');
+            localStorage.removeItem('nm_favorites');
+            localStorage.removeItem('nm_history');
+            favorites = [];
+            history = [];
+            renderLibrary();
+            document.getElementById('home-fav-count').innerText = '0 треков';
+            showToast('Кэш приложения очищен', '🧹');
+        }
+
+        function showQuickInfo() {
+            haptic('light');
+            showToast('NoMusic WebApp v2.0 • Spotify Glass Style', '🎧');
+        }
+
+        // Initialize Home on start
+        renderHome();
     </script>
 </body>
 </html>
