@@ -64,6 +64,7 @@ def init_db():
         ''')
 
         c.execute("CREATE INDEX IF NOT EXISTS idx_downloads_track_id ON downloads(track_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_downloads_url ON downloads(url)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_downloads_file_id ON downloads(telegram_file_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_favorites_user_track ON favorites(user_id, track_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_censor_signature ON censorship_cache(track_signature)")
@@ -171,6 +172,40 @@ def get_cached_file_id(track_id: str) -> str:
             )
             row = c.fetchone()
     return row[0] if row else None
+
+def get_cached_track(track_id: str = None, url: str = None) -> dict:
+    with get_connection() as conn:
+        c = conn.cursor()
+        if track_id and track_id != "link_track":
+            c.execute(
+                "SELECT title, artist, telegram_file_id FROM downloads WHERE track_id = ? AND telegram_file_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                (track_id,)
+            )
+            row = c.fetchone()
+            if not row:
+                c.execute(
+                    "SELECT title, artist, telegram_file_id FROM favorites WHERE track_id = ? AND telegram_file_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                    (track_id,)
+                )
+                row = c.fetchone()
+            if row:
+                return {'title': row[0], 'artist': row[1], 'telegram_file_id': row[2]}
+
+        if url:
+            c.execute(
+                "SELECT title, artist, telegram_file_id FROM downloads WHERE url = ? AND telegram_file_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                (url,)
+            )
+            row = c.fetchone()
+            if not row:
+                c.execute(
+                    "SELECT title, artist, telegram_file_id FROM favorites WHERE url = ? AND telegram_file_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+                    (url,)
+                )
+                row = c.fetchone()
+            if row:
+                return {'title': row[0], 'artist': row[1], 'telegram_file_id': row[2]}
+    return None
 
 ARTIST_ALIASES = {
     'макан': 'MACAN',

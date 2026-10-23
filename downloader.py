@@ -1,4 +1,5 @@
 import os
+import time
 import re
 import tempfile
 import aiohttp
@@ -19,6 +20,10 @@ shazam = Shazam()
 ym_client = None
 SC_AUTH_TOKEN = os.getenv("SOUNDCLOUD_AUTH_TOKEN")
 DEFAULT_TMP_DIR = tempfile.gettempdir()
+_SEARCH_CACHE = {}
+_SEARCH_CACHE_MAX = 500
+_SEARCH_CACHE_TTL = 1800  # 30 mins
+
 
 async def resolve_sc_url(url: str) -> str:
     """Разрешает короткие мобильные ссылки on.soundcloud.com в полный URL"""
@@ -678,14 +683,17 @@ async def search_apple_catalog(query: str, limit: int = 15):
     unique = deduplicate_tracks(results)
     ranked = score_and_sort_tracks(unique, query)[:limit]
 
-    # ПАРАЛЛЕЛЬНАЯ LIVE-ДЕТЕКЦИЯ ЦЕНЗУРЫ ТОП-5 ТРЕКОВ
+    # ПАРАЛЛЕЛЬНАЯ LIVE-ДЕТЕКЦИЯ ЦЕНЗУРЫ ТОП-5 ТРЕКОВ (не более 0.6 сек, чтобы выдача поиска была мгновенной)
     top_candidates = ranked[:5]
     if top_candidates:
         censor_tasks = [fast_resolve_track_censorship(t) for t in top_candidates]
-        censor_flags = await asyncio.gather(*censor_tasks, return_exceptions=True)
-        for idx, flag in enumerate(censor_flags):
-            if isinstance(flag, bool) and flag:
-                top_candidates[idx]['is_censored'] = True
+        try:
+            censor_flags = await asyncio.wait_for(asyncio.gather(*censor_tasks, return_exceptions=True), timeout=0.6)
+            for idx, flag in enumerate(censor_flags):
+                if isinstance(flag, bool) and flag:
+                    top_candidates[idx]['is_censored'] = True
+        except (asyncio.TimeoutError, Exception):
+            pass
 
     return ranked
 
@@ -1130,7 +1138,7 @@ async def download_best_ym_stream(track, path: str):
             async with session.get(direct_link, headers=headers, proxy=proxy) as resp:
                 if resp.status in (200, 206):
                     with open(path, 'wb') as f:
-                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                        async for chunk in resp.content.iter_chunked(128 * 1024):
                             f.write(chunk)
                 elif resp.status == 403:
                     raise Exception("Сервер Яндекс Музыки заблокировал скачивание (403 Forbidden). Проверьте токен YANDEX_MUSIC_TOKEN или используйте прокси РФ.")
@@ -1177,21 +1185,50 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
         ]
 
         target_ym_track = None
-        for q in queries_to_try:
-            if not q:
-                continue
-            sr = await client.search(text=q, type_='track', page=0)
-            if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
-                target_ym_track = sr.tracks.results[0]
-                break
+        if track_id and str(track_id).isdigit():
+            try:
+                tracks = await client.tracks([int(track_id)])
+                if tracks:
+                    target_ym_track = tracks[0]
+            except Exception:
+                pass
+
+        if not target_ym_track:
+            for q in queries_to_try:
+                if not q:
+                    continue
+                sr = await client.search(text=q, type_='track', page=0)
+                if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+                    target_ym_track = sr.tracks.results[0]
+                    break
 
         if not target_ym_track:
             raise Exception("Аудиозапись не найдена в каталоге Яндекс Музыки. Попробуй найти её в SoundCloud.")
 
+        async def fetch_cover_async(url, raw_p, thumb_p):
+            if not url:
+                return None
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(url, timeout=aiohttp.ClientTimeout(total=4.0)) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            with open(raw_p, "wb") as f:
+                                f.write(data)
+                            t = prepare_telegram_cover(raw_p, thumb_p)
+                            if os.path.exists(raw_p):
+                                os.remove(raw_p)
+                            return t
+            except Exception:
+                pass
+            return None
+
         dl_task = download_best_ym_stream(target_ym_track, mp3_path)
         lyrics_task = check_ym_track_censorship(client, target_ym_track)
+        cover_task = fetch_cover_async(cover_url, cover_raw_path, cover_thumb_path)
 
-        dl_res, lyrics_result = await asyncio.gather(dl_task, lyrics_task, return_exceptions=True)
+        dl_res, lyrics_result, cover_res = await asyncio.gather(dl_task, lyrics_task, cover_task, return_exceptions=True)
+        thumb_path = cover_res if isinstance(cover_res, str) and os.path.exists(cover_res) else None
 
         if isinstance(dl_res, Exception):
             raise dl_res
@@ -1222,8 +1259,7 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
     if not download_success or not os.path.exists(mp3_path):
         raise Exception("Не удалось сохранить аудиозапись. Попробуй повторить запрос.")
 
-    thumb_path = None
-    if cover_url:
+    if not thumb_path and cover_url:
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(cover_url) as resp:
@@ -1282,6 +1318,8 @@ async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict
         'format': 'bestaudio/best',
         'outtmpl': temp_template,
         'writethumbnail': True,
+        'concurrent_fragment_downloads': 4,
+        'buffersize': 1024 * 1024,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -1329,7 +1367,7 @@ async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict
 
     if not should_skip_shazam:
         try:
-            out = await shazam.recognize(mp3_path)
+            out = await asyncio.wait_for(shazam.recognize(mp3_path), timeout=2.0)
             track_info = out.get('track')
             if track_info:
                 shazam_title = track_info.get('title', '')
@@ -1406,10 +1444,24 @@ async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict
     }
 
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
+    cache_key = f"{mode}:{normalize_search_query(query)}:{limit}"
+    now = time.time()
+    if cache_key in _SEARCH_CACHE:
+        cached_time, cached_results = _SEARCH_CACHE[cache_key]
+        if now - cached_time < _SEARCH_CACHE_TTL:
+            return cached_results
+
     if mode == "official":
-        return await search_apple_catalog(query, limit=limit)
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, search_sc_sync, query, limit, query)
+        results = await search_apple_catalog(query, limit=limit)
+    else:
+        loop = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, search_sc_sync, query, limit, query)
+
+    if len(_SEARCH_CACHE) > _SEARCH_CACHE_MAX:
+        oldest_k = next(iter(_SEARCH_CACHE))
+        _SEARCH_CACHE.pop(oldest_k, None)
+    _SEARCH_CACHE[cache_key] = (now, results)
+    return results
 
 async def download_track(url: str) -> dict:
     if url.startswith("am://"):

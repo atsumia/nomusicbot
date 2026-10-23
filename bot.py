@@ -899,6 +899,39 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
     file_path = None
     thumb_path = None
     try:
+        # Мгновенная отправка из кэша Telegram file_id (0.2 сек)
+        cached = database.get_cached_track(track_id, url)
+        if cached and cached.get('telegram_file_id'):
+            try:
+                kb_rows = []
+                smart_row = []
+                if album_id and str(album_id).strip() not in ["None", "", "0"]:
+                    smart_row.append(InlineKeyboardButton(text="💿 Альбом", callback_data=f"album:{album_id}"))
+                if artist_id and str(artist_id).strip() not in ["None", "", "0"]:
+                    smart_row.append(InlineKeyboardButton(text="👤 Все треки", callback_data=f"artist_top:{artist_id}"))
+                if smart_row:
+                    kb_rows.append(smart_row)
+
+                is_fav = database.is_favorite(user_id, track_id)
+                fav_text = "❤️ В избранном" if is_fav else "🤍 В избранное"
+                kb_rows.append([InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")])
+                caption_note = "✂️ <i>Цензурная версия (Clean)</i>" if is_censored else None
+
+                await bot.send_audio(
+                    chat_id=chat_id,
+                    audio=cached['telegram_file_id'],
+                    caption=caption_note,
+                    parse_mode="HTML" if caption_note else None,
+                    performer=cached['artist'],
+                    title=cached['title'],
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows)
+                )
+                database.add_download(user_id, track_id, cached['title'], cached['artist'], url, cached['telegram_file_id'])
+                await status_msg.delete()
+                return
+            except Exception as e:
+                print(f"⚠️ [CACHE SEND FAILED]: {e}")
+
         await status_msg.edit_text("⏳ Загружаю аудиозапись...")
         track = await download_track(url)
         file_path = track['file_path']
