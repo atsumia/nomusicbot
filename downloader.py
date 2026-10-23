@@ -583,7 +583,8 @@ async def search_apple_catalog(query: str, limit: int = 15):
                             'artist_id': tagged_artist_id,
                             'album_id': tagged_album_id,
                             'album_title': album_title,
-                            'censored': '1' if censored_flag else '0'
+                            'censored': '1' if censored_flag else '0',
+                            'src': 'am'
                         }
                         encoded_url = "am://" + urllib.parse.urlencode(params)
                         
@@ -640,7 +641,8 @@ async def search_apple_catalog(query: str, limit: int = 15):
                         'artist_id': tagged_artist_id,
                         'album_id': tagged_album_id,
                         'album_title': album_name,
-                        'censored': '1' if censored_flag else '0'
+                        'censored': '1' if censored_flag else '0',
+                        'src': 'ym'
                     }
                     encoded_url = "am://" + urllib.parse.urlencode(params)
                     
@@ -683,17 +685,13 @@ async def search_apple_catalog(query: str, limit: int = 15):
     unique = deduplicate_tracks(results)
     ranked = score_and_sort_tracks(unique, query)[:limit]
 
-    # ПАРАЛЛЕЛЬНАЯ LIVE-ДЕТЕКЦИЯ ЦЕНЗУРЫ ТОП-5 ТРЕКОВ (не более 0.6 сек, чтобы выдача поиска была мгновенной)
-    top_candidates = ranked[:5]
-    if top_candidates:
-        censor_tasks = [fast_resolve_track_censorship(t) for t in top_candidates]
-        try:
-            censor_flags = await asyncio.wait_for(asyncio.gather(*censor_tasks, return_exceptions=True), timeout=0.6)
-            for idx, flag in enumerate(censor_flags):
-                if isinstance(flag, bool) and flag:
-                    top_candidates[idx]['is_censored'] = True
-        except (asyncio.TimeoutError, Exception):
-            pass
+    # Мгновенная проверка цензуры по SQLite кэшу без блокирующих сетевых запросов при поиске
+    for t in ranked:
+        if not t.get('is_censored', False):
+            sig = f"{normalize_text_ru(t.get('uploader', ''))} - {normalize_text_ru(t.get('title', ''))}"
+            cached_flag = database.get_cached_censorship(sig)
+            if cached_flag is True:
+                t['is_censored'] = True
 
     return ranked
 
@@ -1164,6 +1162,7 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
     album_id = params.get('album_id', [None])[0]
     album_title = params.get('album_title', [None])[0]
     is_censored = params.get('censored', ['0'])[0] == '1'
+    src = params.get('src', ['am'])[0]
 
     mp3_path = os.path.join(output_dir, f"am_{track_id}.mp3")
     cover_raw_path = os.path.join(output_dir, f"am_{track_id}_raw.jpg")
@@ -1176,16 +1175,11 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
         raise Exception("Официальный музыкальный сервер временно недоступен. Попробуйте режим SoundCloud.")
 
     try:
-        clean_title = re.sub(r'\(.*?\)|\[.*?\]', '', title).strip()
-        queries_to_try = [
-            f"{artist} - {title}",
-            f"{artist} {title}",
-            title,
-            f"{artist} {clean_title}" if clean_title != title else ""
-        ]
-
         target_ym_track = None
-        if track_id and str(track_id).isdigit():
+        is_ym = (src == 'ym') or (artist_id and str(artist_id).startswith('ym_'))
+
+        # 1. Прямой поиск по ID только если трек изначально из каталога Яндекс Музыки
+        if is_ym and track_id and str(track_id).isdigit():
             try:
                 tracks = await client.tracks([int(track_id)])
                 if tracks:
@@ -1193,18 +1187,58 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
             except Exception:
                 pass
 
+        # 2. Если трек из Apple Music или прямой ID не найден — точный поиск "Артист - Название"
         if not target_ym_track:
-            for q in queries_to_try:
-                if not q:
-                    continue
-                sr = await client.search(text=q, type_='track', page=0)
+            try:
+                sr = await client.search(text=f"{artist} - {title}", type_='track', page=0)
                 if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
                     target_ym_track = sr.tracks.results[0]
+            except Exception:
+                pass
+
+        # 3. Если точный поиск не дал результата — параллельный поиск по альтернативным запросам
+        if not target_ym_track:
+            clean_title = re.sub(r'\(.*?\)|\[.*?\]', '', title).strip()
+            fallback_queries = [f"{artist} {title}", title]
+            if clean_title != title:
+                fallback_queries.append(f"{artist} {clean_title}")
+
+            async def search_fallback(q):
+                try:
+                    res = await client.search(text=q, type_='track', page=0)
+                    if res and getattr(res, 'tracks', None) and getattr(res.tracks, 'results', None):
+                        return res.tracks.results[0]
+                except Exception:
+                    pass
+                return None
+
+            fallback_res = await asyncio.gather(*(search_fallback(q) for q in fallback_queries), return_exceptions=True)
+            for item in fallback_res:
+                if item and not isinstance(item, Exception):
+                    target_ym_track = item
                     break
 
         if not target_ym_track:
             raise Exception("Аудиозапись не найдена в каталоге Яндекс Музыки. Попробуй найти её в SoundCloud.")
 
+        loop = asyncio.get_event_loop()
+
+        # Фоновая проверка цензуры (проверяет Яндекс и при необходимости LRCLIB с таймаутом 1.2 сек)
+        async def resolve_censorship_bg():
+            has_cuts, text_found = await check_ym_track_censorship(client, target_ym_track)
+            if has_cuts:
+                return True
+            if text_found:
+                return False
+            try:
+                lrclib_cut = await asyncio.wait_for(fetch_lrclib_track_censorship(artist, title), timeout=1.2)
+                if lrclib_cut:
+                    return True
+            except Exception:
+                pass
+            return False
+
+        # Фоновая параллельная загрузка обложки
         async def fetch_cover_async(url, raw_p, thumb_p):
             if not url:
                 return None
@@ -1215,7 +1249,7 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
                             data = await resp.read()
                             with open(raw_p, "wb") as f:
                                 f.write(data)
-                            t = prepare_telegram_cover(raw_p, thumb_p)
+                            t = await loop.run_in_executor(None, prepare_telegram_cover, raw_p, thumb_p)
                             if os.path.exists(raw_p):
                                 os.remove(raw_p)
                             return t
@@ -1223,35 +1257,25 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
                 pass
             return None
 
+        # ПАРАЛЛЕЛЬНОЕ ВЫПОЛНЕНИЕ: Стрим MP3 + Проверка текста + Загрузка обложки
         dl_task = download_best_ym_stream(target_ym_track, mp3_path)
-        lyrics_task = check_ym_track_censorship(client, target_ym_track)
+        lyrics_task = resolve_censorship_bg()
         cover_task = fetch_cover_async(cover_url, cover_raw_path, cover_thumb_path)
 
-        dl_res, lyrics_result, cover_res = await asyncio.gather(dl_task, lyrics_task, cover_task, return_exceptions=True)
-        thumb_path = cover_res if isinstance(cover_res, str) and os.path.exists(cover_res) else None
+        dl_res, is_lyrics_censored, cover_res = await asyncio.gather(dl_task, lyrics_task, cover_task, return_exceptions=True)
 
         if isinstance(dl_res, Exception):
             raise dl_res
 
         download_success = True
-        print(f"✅ [YM STREAM SUCCESS]: Успешно выгружен MP3 для {artist} — {title}")
-        
-        sig = f"{normalize_text_ru(artist)} - {normalize_text_ru(title)}"
-        has_lyrics_cuts = False
-        text_was_read = False
-        if isinstance(lyrics_result, tuple):
-            has_lyrics_cuts, text_was_read = lyrics_result
+        thumb_path = cover_res if isinstance(cover_res, str) and os.path.exists(cover_res) else None
 
-        # Если Яндекс не ответил текстом, опрашиваем LRCLIB
-        if not has_lyrics_cuts and not text_was_read:
-            has_lyrics_cuts = await fetch_lrclib_track_censorship(artist, title)
-
-        if has_lyrics_cuts:
+        if isinstance(is_lyrics_censored, bool) and is_lyrics_censored:
             is_censored = True
+            sig = f"{normalize_text_ru(artist)} - {normalize_text_ru(title)}"
             database.set_cached_censorship(sig, True)
-            print(f"✂️ [LYRICS/LEXICAL DETECTED]: Обнаружен триггер цензуры -> сохранён статус Clean")
-        elif text_was_read:
-            database.set_cached_censorship(sig, False)
+            print("✂️ [LYRICS DETECTED]: Обнаружен триггер цензуры -> сохранён статус Clean")
+
     except Exception as e:
         print(f"❌ [YM STREAM ERROR]: Ошибка загрузки из официального каталога: {e}")
         raise e
@@ -1259,43 +1283,27 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
     if not download_success or not os.path.exists(mp3_path):
         raise Exception("Не удалось сохранить аудиозапись. Попробуй повторить запрос.")
 
-    if not thumb_path and cover_url:
+    # Фоновое наложение ID3 тегов и обложки в ThreadPool (не блокирует event loop)
+    def apply_id3_tags(fpath, ftitle, fartist, fthumb):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(cover_url) as resp:
-                    if resp.status == 200:
-                        raw_data = await resp.read()
-                        with open(cover_raw_path, "wb") as f:
-                            f.write(raw_data)
-                        thumb_path = prepare_telegram_cover(cover_raw_path, cover_thumb_path)
-                        if os.path.exists(cover_raw_path):
-                            os.remove(cover_raw_path)
+            try:
+                audio = EasyID3(fpath)
+            except Exception:
+                audio = EasyID3()
+            audio['title'] = ftitle
+            audio['artist'] = fartist
+            audio.save(fpath)
+
+            if fthumb and os.path.exists(fthumb):
+                with open(fthumb, 'rb') as f:
+                    img_data = f.read()
+                id3 = ID3(fpath)
+                id3.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=img_data))
+                id3.save()
         except Exception:
             pass
 
-    try:
-        try:
-            audio = EasyID3(mp3_path)
-        except Exception:
-            audio = EasyID3()
-        audio['title'] = title
-        audio['artist'] = artist
-        audio.save(mp3_path)
-
-        if thumb_path and os.path.exists(thumb_path):
-            with open(thumb_path, 'rb') as f:
-                img_data = f.read()
-            id3 = ID3(mp3_path)
-            id3.add(APIC(
-                encoding=3,
-                mime='image/jpeg',
-                type=3,
-                desc='Cover',
-                data=img_data
-            ))
-            id3.save()
-    except Exception:
-        pass
+    await loop.run_in_executor(None, apply_id3_tags, mp3_path, title, artist, thumb_path)
 
     return {
         'file_path': mp3_path,
@@ -1315,7 +1323,7 @@ async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict
     temp_template = os.path.join(output_dir, '%(id)s.%(ext)s')
 
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[protocol^=http]/bestaudio/best',
         'outtmpl': temp_template,
         'writethumbnail': True,
         'concurrent_fragment_downloads': 4,
@@ -1323,7 +1331,7 @@ async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '320',
+            'preferredquality': '192',
         }],
         'quiet': True,
         'no_warnings': True,
@@ -1387,49 +1395,54 @@ async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict
     cover_file = f"{base_path}_thumb.jpg"
     thumb_path = None
 
-    if cover_url:
+    # Сначала проверяем обложку, уже сохранённую yt-dlp на диск
+    for ext in ['.jpg', '.webp', '.png', '.jpeg']:
+        possible = f"{base_path}{ext}"
+        if os.path.exists(possible):
+            thumb_path = await loop.run_in_executor(None, prepare_telegram_cover, possible, cover_file)
+            try:
+                os.remove(possible)
+            except Exception:
+                pass
+            break
+
+    # Если обложки на диске нет, скачиваем по cover_url
+    if not thumb_path and cover_url:
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(cover_url) as resp:
+                async with session.get(cover_url, timeout=aiohttp.ClientTimeout(total=3.0)) as resp:
                     if resp.status == 200:
                         raw_data = await resp.read()
                         raw_path = f"{base_path}_raw.jpg"
                         with open(raw_path, "wb") as f:
                             f.write(raw_data)
-                        thumb_path = prepare_telegram_cover(raw_path, cover_file)
+                        thumb_path = await loop.run_in_executor(None, prepare_telegram_cover, raw_path, cover_file)
                         if os.path.exists(raw_path):
                             os.remove(raw_path)
         except Exception:
             pass
 
-    if not thumb_path:
-        for ext in ['.jpg', '.webp', '.png', '.jpeg']:
-            possible = f"{base_path}{ext}"
-            if os.path.exists(possible):
-                thumb_path = prepare_telegram_cover(possible, cover_file)
-                try: 
-                    os.remove(possible)
-                except Exception: 
-                    pass
-                break
+    # Фоновое наложение ID3 тегов в ThreadPool
+    def apply_sc_id3(fpath, ftitle, fartist, fthumb):
+        try:
+            try:
+                audio = EasyID3(fpath)
+            except Exception:
+                audio = EasyID3()
+            audio['title'] = ftitle
+            audio['artist'] = fartist
+            audio.save(fpath)
 
-    try:
-        try: 
-            audio = EasyID3(mp3_path)
-        except Exception: 
-            audio = EasyID3()
-        audio['title'] = final_title
-        audio['artist'] = final_artist
-        audio.save(mp3_path)
+            if fthumb and os.path.exists(fthumb):
+                with open(fthumb, 'rb') as f:
+                    img_data = f.read()
+                id3 = ID3(fpath)
+                id3.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=img_data))
+                id3.save()
+        except Exception:
+            pass
 
-        if thumb_path and os.path.exists(thumb_path):
-            with open(thumb_path, 'rb') as f:
-                img_data = f.read()
-            id3 = ID3(mp3_path)
-            id3.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=img_data))
-            id3.save()
-    except Exception:
-        pass
+    await loop.run_in_executor(None, apply_sc_id3, mp3_path, final_title, final_artist, thumb_path)
 
     return {
         'file_path': mp3_path,
