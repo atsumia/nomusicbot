@@ -1095,10 +1095,41 @@ async def handle_webapp(request):
 async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
 
+async def handle_api_search(request):
+    query = request.query.get('q', '').strip()
+    mode = request.query.get('mode', 'official')
+    limit = int(request.query.get('limit', 15))
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': '*'
+    }
+    if not query:
+        return web.json_response({'results': []}, headers=headers)
+    try:
+        results = await search_tracks(query, mode=mode, limit=limit)
+        items = []
+        for t in results:
+            items.append({
+                'id': t.get('id'),
+                'title': t.get('title', 'Без названия'),
+                'artist': t.get('uploader', 'Неизвестный исполнитель'),
+                'cover': t.get('cover_url') or 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=400&q=80',
+                'duration': t.get('duration', 0),
+                'is_censored': t.get('is_censored', False),
+                'source': t.get('source', mode),
+                'url': t.get('url', '')
+            })
+        return web.json_response({'results': items}, headers=headers)
+    except Exception as e:
+        print(f"API search error: {e}")
+        return web.json_response({'results': [], 'error': str(e)}, headers=headers)
+
 async def start_dummy_web_server():
     app = web.Application()
     app.router.add_get('/', handle_webapp)
     app.router.add_get('/app', handle_webapp)
+    app.router.add_get('/api/search', handle_api_search)
     app.router.add_get('/health', handle_health_check)
     
     port = int(os.getenv("PORT", 8080))
