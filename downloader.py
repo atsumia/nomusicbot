@@ -5,6 +5,8 @@ import tempfile
 import aiohttp
 import asyncio
 import urllib.parse
+import uuid
+import shutil
 from PIL import Image
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC
@@ -1481,3 +1483,288 @@ async def download_track(url: str) -> dict:
         return await download_official_track(url)
     else:
         return await download_sc_track(url)
+
+
+def compute_track_match_score(target_artist: str, target_title: str, cand_artist: str, cand_title: str) -> int:
+    ta = normalize_text_ru(target_artist)
+    tt = normalize_text_ru(target_title)
+    ca = normalize_text_ru(cand_artist)
+    ct = normalize_text_ru(cand_title)
+    
+    tt_clean = re.sub(r'\(.*?(official|remaster|video|audio|deluxe|version|album).*?\)', '', tt, flags=re.IGNORECASE).strip()
+    ct_clean = re.sub(r'\(.*?(official|remaster|video|audio|deluxe|version|album).*?\)', '', ct, flags=re.IGNORECASE).strip()
+    
+    score = 0
+    if tt_clean and ct_clean and tt_clean == ct_clean:
+        score += 55
+    elif tt_clean and ct_clean and (tt_clean in ct_clean or ct_clean in tt_clean):
+        score += 40
+    else:
+        tt_words = set(re.findall(r'\w{3,}', tt_clean))
+        ct_words = set(re.findall(r'\w{3,}', ct_clean))
+        if tt_words and tt_words.issubset(ct_words):
+            score += 30
+        elif tt_words and ct_words and (tt_words & ct_words):
+            score += 15
+
+    if ta and ca:
+        if ta == ca:
+            score += 45
+        elif ta in ca or ca in ta:
+            score += 35
+        else:
+            ta_words = set(re.findall(r'\w{3,}', ta))
+            ca_words = set(re.findall(r'\w{3,}', ca))
+            if ta_words and (ta_words & ca_words):
+                score += 25
+    elif not ta:
+        score += 25
+
+    ct_lower = ct.lower()
+    for bad in ['karaoke', 'караоке', 'tribute', 'трибьют', 'ringtone', 'рингтон', 'instrumental cover', '8-bit', 'piano cover', 'backing track']:
+        if bad in ct_lower and bad not in tt.lower():
+            score -= 60
+
+    if any(k in ct_lower for k in ['sped up', 'speed up', 'slowed', 'remix']) and not any(k in tt.lower() for k in ['sped up', 'speed up', 'slowed', 'remix']):
+        score -= 15
+
+    return score
+
+
+def apply_id3_metadata(fpath: str, ftitle: str, fartist: str, fthumb: str = None):
+    try:
+        try:
+            audio = EasyID3(fpath)
+        except Exception:
+            audio = EasyID3()
+        audio['title'] = ftitle
+        audio['artist'] = fartist
+        audio.save(fpath)
+
+        if fthumb and os.path.exists(fthumb):
+            with open(fthumb, 'rb') as f:
+                img_data = f.read()
+            id3 = ID3(fpath)
+            id3.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=img_data))
+            id3.save()
+    except Exception as e:
+        print(f"[ID3 ERROR]: {e}")
+
+
+async def resolve_tiktok_url(url: str) -> str:
+    """Follows redirects for vm.tiktok.com, vt.tiktok.com, etc."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                return str(resp.url)
+    except Exception as e:
+        print(f"[TIKTOK REDIRECT ERROR]: {e}")
+        return url
+
+
+async def download_tiktok_via_api(canonical_url: str, output_dir: str, prefix: str) -> dict | None:
+    """Fallback: Downloads TikTok audio via TikWM API if yt-dlp is restricted."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post('https://www.tikwm.com/api/', data={'url': canonical_url}, timeout=aiohttp.ClientTimeout(total=12)) as resp:
+                if resp.status == 200:
+                    res_json = await resp.json()
+                    if res_json.get('code') == 0:
+                        data = res_json.get('data', {})
+                        music_url = data.get('music')
+                        if music_url:
+                            target_mp3 = os.path.join(output_dir, f"{prefix}_audio.mp3")
+                            async with session.get(music_url, timeout=aiohttp.ClientTimeout(total=20)) as m_resp:
+                                if m_resp.status == 200:
+                                    with open(target_mp3, 'wb') as f:
+                                        f.write(await m_resp.read())
+                                    
+                                    m_info = data.get('music_info', {})
+                                    return {
+                                        'file_path': target_mp3,
+                                        'title': m_info.get('title') or data.get('title', 'TikTok Audio'),
+                                        'uploader': m_info.get('author') or data.get('author', {}).get('nickname', 'TikTok'),
+                                        'track': m_info.get('title'),
+                                        'artist': m_info.get('author'),
+                                        'thumbnail': m_info.get('cover') or data.get('cover'),
+                                        'duration': data.get('duration', 0)
+                                    }
+    except Exception as e:
+        print(f"[TIKWM FALLBACK ERROR]: {e}")
+    return None
+
+
+async def download_tiktok_audio(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict:
+    canonical_url = await resolve_tiktok_url(url)
+    os.makedirs(output_dir, exist_ok=True)
+    temp_prefix = f"tt_{uuid.uuid4().hex[:8]}"
+    temp_template = os.path.join(output_dir, f"{temp_prefix}_%(id)s.%(ext)s")
+
+    has_ffmpeg = bool(shutil.which('ffmpeg'))
+
+    ydl_opts = {
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'outtmpl': temp_template,
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 20,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
+            'Referer': 'https://www.tiktok.com/',
+        }
+    }
+    if has_ffmpeg:
+        ydl_opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }]
+
+    loop = asyncio.get_event_loop()
+
+    def run_ydl():
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(canonical_url, download=True)
+            filename = ydl.prepare_filename(info)
+            if has_ffmpeg:
+                base, _ = os.path.splitext(filename)
+                target_file = f"{base}.mp3"
+                if not os.path.exists(target_file):
+                    target_file = filename
+            else:
+                target_file = filename
+            return target_file, info
+
+    try:
+        file_path, info = await loop.run_in_executor(None, run_ydl)
+        return {
+            'file_path': file_path,
+            'title': info.get('title', 'TikTok Audio'),
+            'uploader': info.get('uploader') or info.get('creator', 'TikTok'),
+            'track': info.get('track'),
+            'artist': info.get('artist'),
+            'thumbnail': info.get('thumbnail'),
+            'duration': info.get('duration', 0)
+        }
+    except Exception as e:
+        print(f"[YTDL TIKTOK ERROR]: {e}")
+        fallback_data = await download_tiktok_via_api(canonical_url, output_dir, temp_prefix)
+        if fallback_data:
+            return fallback_data
+        raise Exception(f"Не удалось извлечь звук из TikTok: {str(e)}")
+
+
+async def recognize_tiktok_sound(audio_path: str, tt_info: dict) -> tuple[str, str, str | None]:
+    """Recognizes track from audio snippet using Shazam, falling back to TikTok metadata."""
+    artist, title, cover_url = "", "", None
+
+    # 1. Shazam recognition
+    if audio_path and os.path.exists(audio_path):
+        try:
+            out = await asyncio.wait_for(shazam.recognize(audio_path), timeout=8.0)
+            if out and out.get('track'):
+                tr = out['track']
+                title = tr.get('title', '').strip()
+                artist = tr.get('subtitle', '').strip()
+                cover_url = tr.get('images', {}).get('coverart')
+                print(f"[TIKTOK SHAZAM HIT]: {artist} - {title}")
+                return artist, title, cover_url
+        except Exception as e:
+            print(f"[TIKTOK SHAZAM TIMEOUT/FAIL]: {e}")
+
+    # 2. TikTok metadata fallback
+    tt_track = (tt_info.get('track') or "").strip()
+    tt_artist = (tt_info.get('artist') or "").strip()
+    tt_uploader = (tt_info.get('uploader') or "").strip()
+    tt_title = (tt_info.get('title') or "").strip()
+    cover_url = tt_info.get('thumbnail')
+
+    generic_sounds = ['original sound', 'оригинальный звук', 'original ton', 'son original', 'sonido original']
+    if tt_track and not any(g in tt_track.lower() for g in generic_sounds):
+        if " - " in tt_track and not tt_artist:
+            parts = tt_track.split(" - ", 1)
+            artist = parts[0].strip()
+            title = parts[1].strip()
+        else:
+            title = tt_track
+            artist = tt_artist or tt_uploader
+        return artist, title, cover_url
+
+    match = re.search(r'(?:трек|track|песня|song)[:\s]+([^#\n]+)', tt_title, re.IGNORECASE)
+    if match:
+        extracted = match.group(1).strip()
+        if " - " in extracted:
+            p = extracted.split(" - ", 1)
+            return p[0].strip(), p[1].strip(), cover_url
+        else:
+            return "", extracted, cover_url
+
+    return "", "", cover_url
+
+
+async def resolve_best_track_for_query(artist: str, title: str) -> tuple[dict | None, str]:
+    """
+    Searches official platforms first, scoring candidates.
+    If official score >= 60, returns (track, "official").
+    Otherwise searches SoundCloud. If SoundCloud score >= 50, returns (track, "soundcloud").
+    Otherwise returns (None, "none").
+    """
+    if not title:
+        return None, "none"
+
+    clean_artist = artist.strip()
+    clean_title = title.strip()
+    query = f"{clean_artist} {clean_title}".strip()
+
+    # Step 1: Official catalog search (Apple Music + Yandex Music)
+    try:
+        official_candidates = await search_tracks(query, mode="official", limit=12)
+        if not official_candidates and clean_artist and any(sep in clean_artist for sep in [',', '&', 'feat', 'ft.']):
+            main_artist = re.split(r'[,&]|\bfeat\b|\bft\.\b', clean_artist, flags=re.IGNORECASE)[0].strip()
+            official_candidates = await search_tracks(f"{main_artist} {clean_title}", mode="official", limit=12)
+
+        if official_candidates:
+            scored_official = []
+            for cand in official_candidates:
+                score = compute_track_match_score(clean_artist, clean_title, cand.get('uploader', ''), cand.get('title', ''))
+                scored_official.append((score, cand))
+            
+            scored_official.sort(key=lambda x: x[0], reverse=True)
+            best_score, best_track = scored_official[0]
+            print(f"[OFFICIAL BEST MATCH]: Score={best_score} for {best_track.get('uploader')} - {best_track.get('title')}")
+            if best_score >= 60:
+                return best_track, "official"
+    except Exception as e:
+        print(f"[OFFICIAL SEARCH ERROR]: {e}")
+
+    # Step 2: SoundCloud search
+    try:
+        sc_candidates = await search_tracks(query, mode="soundcloud", limit=12)
+        if not sc_candidates and clean_artist and any(sep in clean_artist for sep in [',', '&', 'feat', 'ft.']):
+            main_artist = re.split(r'[,&]|\bfeat\b|\bft\.\b', clean_artist, flags=re.IGNORECASE)[0].strip()
+            sc_candidates = await search_tracks(f"{main_artist} {clean_title}", mode="soundcloud", limit=12)
+
+        if sc_candidates:
+            scored_sc = []
+            for cand in sc_candidates:
+                score = compute_track_match_score(clean_artist, clean_title, cand.get('uploader', ''), cand.get('title', ''))
+                scored_sc.append((score, cand))
+
+            scored_sc.sort(key=lambda x: x[0], reverse=True)
+            best_score, best_track = scored_sc[0]
+            print(f"[SOUNDCLOUD BEST MATCH]: Score={best_score} for {best_track.get('uploader')} - {best_track.get('title')}")
+            if best_score >= 50:
+                return best_track, "soundcloud"
+    except Exception as e:
+        print(f"[SOUNDCLOUD SEARCH ERROR]: {e}")
+
+    return None, "none"

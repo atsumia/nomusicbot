@@ -1,6 +1,10 @@
 import os
 import json
 import asyncio
+import re
+import uuid
+import tempfile
+import aiohttp
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -33,7 +37,11 @@ from downloader import (
     search_artist_discography,
     search_tracks_by_lyrics,
     get_am_album_tracks,
-    get_ym_client
+    get_ym_client,
+    download_tiktok_audio,
+    recognize_tiktok_sound,
+    resolve_best_track_for_query,
+    apply_id3_metadata
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -683,9 +691,168 @@ async def handle_web_app_data(message: types.Message):
     except Exception as e:
         print(f"❌ [WEBAPP DATA ERROR]: {e}")
 
+TIKTOK_URL_REGEX = re.compile(r'https?://(?:[a-zA-Z0-9_-]+\.)?tiktok\.com/[^\s]+', re.IGNORECASE)
+
+async def send_tiktok_raw_audio(chat_id: int, user_id: int, tt_data: dict, status_msg: types.Message):
+    file_path = tt_data.get('file_path')
+    if not file_path or not os.path.exists(file_path):
+        await status_msg.edit_text("❌ Не удалось извлечь звук из этого видео.")
+        return
+
+    artist = tt_data.get('artist') or tt_data.get('uploader') or "TikTok"
+    title = tt_data.get('title') or "Звук из TikTok"
+    duration = int(tt_data.get('duration') or 0)
+    thumbnail_url = tt_data.get('thumbnail')
+
+    thumb_file = None
+    if thumbnail_url:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(thumbnail_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        tf = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+                        tf.write(await resp.read())
+                        tf.close()
+                        thumb_file = tf.name
+        except Exception:
+            pass
+
+    apply_id3_metadata(file_path, title, artist, thumb_file)
+
+    audio = FSInputFile(path=file_path, filename=f"{artist} - {title}.mp3")
+    thumbnail = FSInputFile(thumb_file) if thumb_file and os.path.exists(thumb_file) else None
+
+    caption = (
+        f"🎵 <b>Звук из TikTok</b>\n"
+        f"<b>{artist} — {title}</b>\n\n"
+        f"<i>(Оригинальная звуковая дорожка из видео)</i>"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔎 Искать в боте", switch_inline_query_current_chat=f"{artist} {title}")]
+    ])
+
+    await bot.send_audio(
+        chat_id=chat_id,
+        audio=audio,
+        caption=caption,
+        parse_mode="HTML",
+        performer=artist,
+        title=title,
+        duration=duration,
+        thumbnail=thumbnail,
+        reply_markup=kb
+    )
+    database.add_download(user_id, f"tt_{uuid.uuid4().hex[:8]}", title, artist, "tiktok", None)
+    await status_msg.delete()
+
+    if thumb_file and os.path.exists(thumb_file):
+        try:
+            os.remove(thumb_file)
+        except Exception:
+            pass
+
+
+async def handle_tiktok_url(message: types.Message, tiktok_url: str):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    status_msg = await message.answer("🔎 Распознаю трек из TikTok...")
+
+    temp_audio_file = None
+    try:
+        # 1. Скачиваем аудиодорожку из TikTok
+        tt_data = await download_tiktok_audio(tiktok_url)
+        temp_audio_file = tt_data.get('file_path')
+
+        # 2. Запускаем распознавание через Shazam
+        artist, title, cover_url = await recognize_tiktok_sound(temp_audio_file, tt_data)
+
+        if not title:
+            # Шазам и метаданные не дали конкретного названия
+            await status_msg.edit_text("⚠️ Не удалось определить название трека через Shazam.\n⏳ Отправляю оригинальный звук из видео...")
+            await send_tiktok_raw_audio(chat_id, user_id, tt_data, status_msg)
+            return
+
+        # 3. Ищем трек на стриминговых площадках с приоритетом официальных
+        await status_msg.edit_text(
+            f"🎧 Распознано: <b>{artist} — {title}</b>\n🔍 Ищу официальный релиз в высоком качестве (320 kbps)...",
+            parse_mode="HTML"
+        )
+
+        best_track, source_type = await resolve_best_track_for_query(artist, title)
+
+        if best_track and source_type == "official":
+            await status_msg.edit_text(
+                f"✨ Найдено на официальных площадках!\n⏳ Загружаю <b>{best_track['uploader']} — {best_track['title']}</b> (320 kbps)...",
+                parse_mode="HTML"
+            )
+            caption_hdr = (
+                f"🎵 <b>Распознано из TikTok</b>\n"
+                f"<b>{best_track['uploader']} — {best_track['title']}</b>\n"
+                f"Платформа: ✦ Официальный релиз"
+            )
+            await process_and_send_audio(
+                chat_id, user_id, best_track['id'], best_track['url'], status_msg,
+                artist_id=best_track.get('artist_id'), album_id=best_track.get('album_id'),
+                is_censored=best_track.get('is_censored', False),
+                caption_header=caption_hdr
+            )
+            return
+
+        elif best_track and source_type == "soundcloud":
+            await status_msg.edit_text(
+                f"☁️ Найдено на SoundCloud!\n⏳ Загружаю <b>{best_track['uploader']} — {best_track['title']}</b>...",
+                parse_mode="HTML"
+            )
+            caption_hdr = (
+                f"🎵 <b>Распознано из TikTok</b>\n"
+                f"<b>{best_track['uploader']} — {best_track['title']}</b>\n"
+                f"Платформа: ☁️ SoundCloud"
+            )
+            await process_and_send_audio(
+                chat_id, user_id, best_track['id'], best_track['url'], status_msg,
+                caption_header=caption_hdr
+            )
+            return
+
+        else:
+            # Трек распознан (например, неизданный ремикс), но на площадках полного релиза нет
+            await status_msg.edit_text(
+                f"🎧 Распознано: <b>{artist} — {title}</b>\n⚠️ Полный релиз пока не найден на стримингах. Отправляю дорожку из видео...",
+                parse_mode="HTML"
+            )
+            tt_data['artist'] = artist or tt_data.get('uploader', 'TikTok')
+            tt_data['title'] = title or tt_data.get('title', 'Audio')
+            if cover_url:
+                tt_data['thumbnail'] = cover_url
+            await send_tiktok_raw_audio(chat_id, user_id, tt_data, status_msg)
+            return
+
+    except Exception as e:
+        print(f"❌ [TIKTOK PROCESSING ERROR]: {e}")
+        await status_msg.edit_text(f"❌ Ошибка при обработке TikTok: {e}")
+    finally:
+        if temp_audio_file and os.path.exists(temp_audio_file):
+            try:
+                os.remove(temp_audio_file)
+            except Exception:
+                pass
+
+
+@dp.message(F.text.regexp(r'https?://(?:[a-zA-Z0-9_-]+\.)?tiktok\.com/[^\s]+'))
+async def tiktok_link_handler(message: types.Message):
+    match = TIKTOK_URL_REGEX.search(message.text)
+    if match:
+        await handle_tiktok_url(message, match.group(0))
+
+
 @dp.message(F.text.regexp(r'https?://[^\s]+'))
 async def handle_url(message: types.Message):
     url = message.text.strip()
+    match = TIKTOK_URL_REGEX.search(url)
+    if match:
+        await handle_tiktok_url(message, match.group(0))
+        return
     status_msg = await message.answer("⏳ Загрузка ссылки...")
     await process_and_send_audio(message.chat.id, message.from_user.id, "link_track", url, status_msg)
 
@@ -693,6 +860,13 @@ async def handle_url(message: types.Message):
 async def handle_text_messages(message: types.Message):
     user_id = message.from_user.id
     text = message.text.strip()
+
+    # Проверка на ссылку TikTok в тексте сообщения (например, при шейре из приложения с подписью)
+    tt_match = TIKTOK_URL_REGEX.search(text)
+    if tt_match:
+        await handle_tiktok_url(message, tt_match.group(0))
+        return
+
     user = database.get_user(user_id, message.from_user.username or message.from_user.first_name)
     mode = user['search_mode']
     
@@ -930,7 +1104,8 @@ async def callback_noop(callback: CallbackQuery):
     await callback.answer()
 
 async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url: str, status_msg: types.Message, 
-                               artist_id: str = None, album_id: str = None, is_censored: bool = False):
+                               artist_id: str = None, album_id: str = None, is_censored: bool = False,
+                               caption_header: str = None):
     file_path = None
     thumb_path = None
     try:
@@ -950,7 +1125,13 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
                 is_fav = database.is_favorite(user_id, track_id)
                 fav_text = "❤️ В избранном" if is_fav else "🤍 В избранное"
                 kb_rows.append([InlineKeyboardButton(text=fav_text, callback_data=f"fav:{track_id}")])
-                caption_note = "✂️ <i>Цензурная версия (Clean)</i>" if is_censored else None
+                
+                caption_parts = []
+                if caption_header:
+                    caption_parts.append(caption_header)
+                if is_censored:
+                    caption_parts.append("✂️ <i>Цензурная версия (Clean)</i>")
+                caption_note = "\n\n".join(caption_parts) if caption_parts else None
 
                 await bot.send_audio(
                     chat_id=chat_id,
@@ -1003,7 +1184,12 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
 
         kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
-        caption_note = "✂️ <i>Цензурная версия (Clean)</i>" if censored_status else None
+        caption_parts = []
+        if caption_header:
+            caption_parts.append(caption_header)
+        if censored_status:
+            caption_parts.append("✂️ <i>Цензурная версия (Clean)</i>")
+        caption_note = "\n\n".join(caption_parts) if caption_parts else None
 
         sent_msg = await bot.send_audio(
             chat_id=chat_id,
