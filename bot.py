@@ -84,8 +84,8 @@ def get_bottom_reply_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     
     keyboard = [
         [KeyboardButton(text="🔎 Поиск"), KeyboardButton(text="🎙 Поиск артиста")],
-        [KeyboardButton(text="📝 Поиск по тексту"), KeyboardButton(text=f"🎧 {mode_label}")],
-        [KeyboardButton(text="👤 Мой кабинет")]
+        [KeyboardButton(text="📝 Поиск по тексту"), KeyboardButton(text="📱 Трек из TikTok")],
+        [KeyboardButton(text="👤 Мой кабинет"), KeyboardButton(text=f"🎧 {mode_label}")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
@@ -100,7 +100,8 @@ def get_main_menu(user_id: int) -> InlineKeyboardMarkup:
     keyboard.extend([
         [InlineKeyboardButton(text="🔎 Поиск музыки", callback_data="menu:search"),
          InlineKeyboardButton(text="🎙 Поиск артиста", callback_data="menu:artist_search")],
-        [InlineKeyboardButton(text="📝 Поиск по тексту песни", callback_data="menu:lyrics_search")],
+        [InlineKeyboardButton(text="📝 Поиск по тексту песни", callback_data="menu:lyrics_search"),
+         InlineKeyboardButton(text="📱 Трек из TikTok", callback_data="menu:tiktok_search")],
         [InlineKeyboardButton(text="👤 Мой кабинет", callback_data="menu:profile")],
         [InlineKeyboardButton(text=f"🎧 Режим: {mode_text}", callback_data="menu:toggle_mode")]
     ])
@@ -350,6 +351,18 @@ async def lyrics_search_start(message: types.Message):
         parse_mode="HTML"
     )
 
+@dp.message(Command("tiktok"))
+@dp.message(F.text == "📱 Трек из TikTok")
+async def tiktok_search_start(message: types.Message):
+    user_id = message.from_user.id
+    USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "tiktok"
+    await message.answer(
+        "📱 <b>Распознавание трека из TikTok</b>\n\n"
+        "Отправь мне ссылку на видео из TikTok (или поделись им из приложения TikTok).\n\n"
+        "<blockquote>💡 <i>Я прошазамлю звук из ролика, найду полный оригинальный трек на официальных площадках (или SoundCloud) и отправлю аудиофайл в 320 kbps!</i></blockquote>",
+        parse_mode="HTML"
+    )
+
 @dp.message(F.text == "🔎 Поиск")
 async def reply_search_handler(message: types.Message):
     user_id = message.from_user.id
@@ -418,6 +431,18 @@ async def menu_lyrics_search(callback: CallbackQuery):
         "📝 <b>Поиск по тексту песни:</b>\n"
         "Отправь запомнившиеся слова или строчку из трека.\n"
         "Я найду песню на официальных площадках по тексту!",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "menu:tiktok_search")
+async def menu_tiktok_search(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    USER_SESSIONS.setdefault(user_id, {})["awaiting"] = "tiktok"
+    await callback.message.answer(
+        "📱 <b>Распознавание трека из TikTok</b>\n\n"
+        "Отправь ссылку на видео из TikTok (или поделись им из приложения TikTok).\n\n"
+        "<blockquote>💡 <i>Я прошазамлю звук из ролика, найду полный оригинальный трек на официальных площадках (или SoundCloud) и отправлю аудиофайл в 320 kbps!</i></blockquote>",
         parse_mode="HTML"
     )
     await callback.answer()
@@ -898,6 +923,20 @@ async def handle_text_messages(message: types.Message):
         await perform_lyrics_search_and_send(message.chat.id, user_id, text)
         return
 
+    if session.get("awaiting") == "tiktok":
+        session["awaiting"] = None
+        match = TIKTOK_URL_REGEX.search(text)
+        if match:
+            await handle_tiktok_url(message, match.group(0))
+            return
+        else:
+            await message.answer(
+                "⚠️ Не удалось обнаружить ссылку на TikTok в сообщении.\n"
+                "Пожалуйста, отправь ссылку формата <code>https://vm.tiktok.com/...</code> или <code>https://www.tiktok.com/@.../video/...</code>",
+                parse_mode="HTML"
+            )
+            return
+
     await perform_search_and_send(message.chat.id, user_id, text, mode)
 
 @dp.callback_query(F.data.startswith("dl:"))
@@ -1331,6 +1370,7 @@ async def set_bot_commands():
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="artist", description="Поиск дискографии артиста"),
         BotCommand(command="lyrics", description="Поиск трека по тексту"),
+        BotCommand(command="tiktok", description="Распознать трек из TikTok"),
     ]
     await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
 
@@ -1338,6 +1378,7 @@ async def set_bot_commands():
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="artist", description="Поиск дискографии артиста"),
         BotCommand(command="lyrics", description="Поиск трека по тексту"),
+        BotCommand(command="tiktok", description="Распознать трек из TikTok"),
         BotCommand(command="admin", description="Панель управления"),
     ]
     for admin_id in ADMIN_IDS:
