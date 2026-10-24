@@ -41,16 +41,14 @@ from downloader import (
     download_tiktok_audio,
     recognize_tiktok_sound,
     resolve_best_track_for_query,
-    apply_id3_metadata
+    apply_id3_metadata,
+    fetch_synced_lyrics
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBAPP_URL = os.getenv("WEBAPP_URL")
 
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не задан!")
-
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 dp = Dispatcher()
 
 USER_SESSIONS = {}
@@ -1365,10 +1363,14 @@ async def handle_api_stream(request):
         return web.Response(headers=headers)
 
     url = request.query.get('url', '').strip()
+    track_id = request.query.get('id', '').strip()
     q = request.query.get('q', '').strip()
 
+    if not url and track_id:
+        url = track_id if track_id.startswith('ym://') else f"ym://{track_id.replace('ym_', '')}"
+
     if not url and not q:
-        return web.json_response({'error': "Missing 'url' or 'q' parameter"}, status=400, headers=headers)
+        return web.json_response({'error': "Missing 'url', 'id' or 'q' parameter"}, status=400, headers=headers)
 
     try:
         if not url and q:
@@ -1393,14 +1395,40 @@ async def handle_api_stream(request):
         print(f"❌ [API STREAM ERROR]: {e}")
         return web.json_response({'error': str(e)}, status=500, headers=headers)
 
-async def start_dummy_web_server():
+async def handle_api_lyrics(request):
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': '*'
+    }
+    if request.method == 'OPTIONS':
+        return web.Response(headers=headers)
+
+    artist = request.query.get('artist', '').strip()
+    title = request.query.get('title', '').strip()
+
+    if not artist or not title:
+        return web.json_response({'lyrics': []}, headers=headers)
+
+    try:
+        lyrics = await fetch_synced_lyrics(artist, title)
+        return web.json_response({'lyrics': lyrics}, headers=headers)
+    except Exception as e:
+        print(f"❌ [API LYRICS ERROR]: {e}")
+        return web.json_response({'lyrics': [], 'error': str(e)}, headers=headers)
+
+def create_web_app():
     app = web.Application()
     app.router.add_get('/', handle_webapp)
     app.router.add_get('/app', handle_webapp)
     app.router.add_route('*', '/api/search', handle_api_search)
     app.router.add_route('*', '/api/stream', handle_api_stream)
+    app.router.add_route('*', '/api/lyrics', handle_api_lyrics)
     app.router.add_get('/health', handle_health_check)
-    
+    return app
+
+async def start_dummy_web_server():
+    app = create_web_app()
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
@@ -1408,6 +1436,8 @@ async def start_dummy_web_server():
     await site.start()
 
 async def set_bot_commands():
+    if not bot:
+        return
     user_commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="artist", description="Поиск дискографии артиста"),
@@ -1436,16 +1466,27 @@ async def set_bot_commands():
 
 async def main():
     database.init_db()
-    await set_bot_commands()
-    await start_dummy_web_server()
-    
-    await bot.delete_webhook(drop_pending_updates=True)
-    print("Бот NoMusic успешно запущен...")
-    
-    await dp.start_polling(
-        bot,
-        allowed_updates=["message", "callback_query", "inline_query", "chosen_inline_result"]
-    )
+    if bot and dp:
+        await set_bot_commands()
+        await start_dummy_web_server()
+        await bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Бот NoMusic и Web API успешно запущены...")
+        await dp.start_polling(
+            bot,
+            allowed_updates=["message", "callback_query", "inline_query", "chosen_inline_result"]
+        )
+    else:
+        print("⚠️ BOT_TOKEN не задан. Запускаю автономный музыкальный движок (Search + Stream + Lyrics)...")
+        app = create_web_app()
+        port = int(os.getenv("PORT", 8080))
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        print(f"🚀 Музыкальный движок NoMusic успешно запущен на http://127.0.0.1:{port}")
+        while True:
+            await asyncio.sleep(3600)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,4 +1,11 @@
 import os
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 import time
 import re
 import tempfile
@@ -1468,6 +1475,133 @@ async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict
         'is_censored': False
     }
 
+async def search_yandex_catalog(query: str, limit: int = 15):
+    """Прямой поиск в официальном каталоге Яндекс Музыки с высоким качеством и обложками"""
+    client = await get_ym_client()
+    if not client:
+        return []
+    try:
+        sr = await client.search(text=query, type_='track', page=0)
+        items = []
+        if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+            for t in sr.tracks.results[:limit]:
+                arts = ", ".join([a.name for a in t.artists]) if t.artists else "Исполнитель"
+                cover_url = f"https://{t.cover_uri.replace('%%', '600x600')}" if t.cover_uri else "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80"
+                items.append({
+                    'id': f"ym_{t.id}",
+                    'title': t.title,
+                    'uploader': arts,
+                    'cover_url': cover_url,
+                    'duration': (t.duration_ms or 0) // 1000,
+                    'url': f"ym://{t.id}",
+                    'source': 'yandex',
+                    'is_censored': False
+                })
+        return items
+    except Exception as e:
+        print(f"YM search error: {e}")
+        return []
+
+async def download_ym_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict:
+    """Прямое скачивание оригинального потока Яндекс Музыки (320 kbps) по track_id"""
+    track_id = url.replace("ym://", "").split("?")[0]
+    out_path = os.path.join(output_dir, f"ym_{track_id}.mp3")
+
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 100_000:
+        try:
+            audio = EasyID3(out_path)
+            title = audio.get('title', ['Трек'])[0]
+            artist = audio.get('artist', ['Артист'])[0]
+        except Exception:
+            title, artist = 'Трек', 'Артист'
+        return {
+            'file_path': out_path,
+            'title': title,
+            'artist': artist,
+            'duration': 0
+        }
+
+    client = await get_ym_client()
+    if not client:
+        raise Exception("Яндекс Музыка недоступна.")
+
+    tracks = await client.tracks([int(track_id)])
+    if not tracks:
+        raise Exception(f"Трек {track_id} не найден в каталоге Яндекс Музыки.")
+    
+    track = tracks[0]
+    await download_best_ym_stream(track, out_path)
+
+    artist_name = ", ".join([a.name for a in track.artists]) if track.artists else "Артист"
+    title = track.title or "Трек"
+
+    try:
+        try:
+            audio = EasyID3(out_path)
+        except Exception:
+            audio = EasyID3()
+        audio['title'] = title
+        audio['artist'] = artist_name
+        audio.save(out_path)
+    except Exception:
+        pass
+
+    return {
+        'file_path': out_path,
+        'title': title,
+        'artist': artist_name,
+        'duration': (track.duration_ms or 0) // 1000
+    }
+
+async def fetch_synced_lyrics(artist: str, title: str) -> list:
+    """
+    Получает караоке-тайминги (LRC) из LRCLIB или Яндекс Музыки.
+    Возвращает список [{ 'time': float, 'text': str }]
+    """
+    clean_art = artist.strip()
+    clean_tit = re.sub(r'\(.*?\)|\[.*?\]', '', title).strip() or title.strip()
+    
+    try:
+        url = f"https://lrclib.net/api/get?artist_name={urllib.parse.quote(clean_art)}&track_name={urllib.parse.quote(clean_tit)}"
+        headers = {'User-Agent': 'NoMusic/1.0'}
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    synced = data.get('syncedLyrics')
+                    if synced:
+                        parsed = []
+                        for line in synced.splitlines():
+                            m = re.match(r'\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)', line.strip())
+                            if m:
+                                mins, secs, txt = m.groups()
+                                t_sec = round(int(mins) * 60 + float(secs), 2)
+                                if txt.strip():
+                                    parsed.append({'time': t_sec, 'text': txt.strip()})
+                        if parsed:
+                            return parsed
+                    plain = data.get('plainLyrics')
+                    if plain:
+                        return [{'time': i * 5.0, 'text': l.strip()} for i, l in enumerate(plain.splitlines()) if l.strip()]
+    except Exception as e:
+        print(f"Lyrics lookup error in LRCLIB: {e}")
+
+    try:
+        client = await get_ym_client()
+        if client:
+            sr = await client.search(text=f"{clean_art} {clean_tit}", type_='track', page=0)
+            if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
+                ym_track = sr.tracks.results[0]
+                sup = await ym_track.get_supplement_async()
+                if sup and getattr(sup, 'lyrics', None) and sup.lyrics.full_lyrics:
+                    lines = [l.strip() for l in sup.lyrics.full_lyrics.splitlines() if l.strip()]
+                    return [{'time': i * 5.0, 'text': l} for i, l in enumerate(lines)]
+    except Exception as e:
+        print(f"YM lyrics lookup error: {e}")
+
+    return []
+
 async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     cache_key = f"{mode}:{normalize_search_query(query)}:{limit}"
     now = time.time()
@@ -1476,8 +1610,13 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
         if now - cached_time < _SEARCH_CACHE_TTL:
             return cached_results
 
+    results = []
     if mode == "official":
-        results = await search_apple_catalog(query, limit=limit)
+        ym_results = await search_yandex_catalog(query, limit=limit)
+        if ym_results:
+            results = ym_results
+        else:
+            results = await search_apple_catalog(query, limit=limit)
     else:
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(None, search_sc_sync, query, limit, query)
@@ -1489,10 +1628,13 @@ async def search_tracks(query: str, mode: str = "official", limit: int = 15):
     return results
 
 async def download_track(url: str) -> dict:
-    if url.startswith("am://"):
+    if url.startswith("ym://"):
+        return await download_ym_track(url)
+    elif url.startswith("am://"):
         return await download_official_track(url)
     else:
         return await download_sc_track(url)
+
 
 
 def compute_track_match_score(target_artist: str, target_title: str, cand_artist: str, cand_title: str) -> int:
