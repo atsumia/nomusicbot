@@ -1170,6 +1170,16 @@ async def download_official_track(url_data: str, output_dir: str = DEFAULT_TMP_D
     cover_raw_path = os.path.join(output_dir, f"am_{track_id}_raw.jpg")
     cover_thumb_path = os.path.join(output_dir, f"am_{track_id}_thumb.jpg")
 
+    if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 100 * 1024:
+        return {
+            'file_path': mp3_path,
+            'title': title,
+            'artist': artist,
+            'duration': duration,
+            'is_censored': is_censored,
+            'cover_path': cover_thumb_path if os.path.exists(cover_thumb_path) else None
+        }
+
     download_success = False
 
     client = await get_ym_client()

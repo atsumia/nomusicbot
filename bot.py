@@ -1323,14 +1323,17 @@ async def handle_health_check(request):
     return web.Response(text="NoMusic bot is running!")
 
 async def handle_api_search(request):
-    query = request.query.get('q', '').strip()
-    mode = request.query.get('mode', 'official')
-    limit = int(request.query.get('limit', 15))
     headers = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': '*'
     }
+    if request.method == 'OPTIONS':
+        return web.Response(headers=headers)
+
+    query = request.query.get('q', '').strip()
+    mode = request.query.get('mode', 'official')
+    limit = int(request.query.get('limit', 15))
     if not query:
         return web.json_response({'results': []}, headers=headers)
     try:
@@ -1352,11 +1355,50 @@ async def handle_api_search(request):
         print(f"API search error: {e}")
         return web.json_response({'results': [], 'error': str(e)}, headers=headers)
 
+async def handle_api_stream(request):
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': '*'
+    }
+    if request.method == 'OPTIONS':
+        return web.Response(headers=headers)
+
+    url = request.query.get('url', '').strip()
+    q = request.query.get('q', '').strip()
+
+    if not url and not q:
+        return web.json_response({'error': "Missing 'url' or 'q' parameter"}, status=400, headers=headers)
+
+    try:
+        if not url and q:
+            results = await search_tracks(q, mode='official', limit=1)
+            if not results:
+                results = await search_tracks(q, mode='soundcloud', limit=1)
+            if not results:
+                return web.json_response({'error': 'Track not found'}, status=404, headers=headers)
+            url = results[0]['url']
+
+        track_info = await download_track(url)
+        file_path = track_info.get('file_path')
+        if not file_path or not os.path.exists(file_path):
+            return web.json_response({'error': 'Audio file not generated'}, status=500, headers=headers)
+
+        return web.FileResponse(file_path, headers={
+            **headers,
+            'Content-Type': 'audio/mpeg',
+            'Accept-Ranges': 'bytes'
+        })
+    except Exception as e:
+        print(f"❌ [API STREAM ERROR]: {e}")
+        return web.json_response({'error': str(e)}, status=500, headers=headers)
+
 async def start_dummy_web_server():
     app = web.Application()
     app.router.add_get('/', handle_webapp)
     app.router.add_get('/app', handle_webapp)
-    app.router.add_get('/api/search', handle_api_search)
+    app.router.add_route('*', '/api/search', handle_api_search)
+    app.router.add_route('*', '/api/stream', handle_api_stream)
     app.router.add_get('/health', handle_health_check)
     
     port = int(os.getenv("PORT", 8080))
