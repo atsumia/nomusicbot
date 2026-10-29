@@ -23,6 +23,7 @@ from aiogram.types import (
     BotCommandScopeDefault,
     BotCommandScopeChat,
     InlineQuery,
+    InlineQueryResultAudio,
     InlineQueryResultCachedAudio,
     InlineQueryResultArticle,
     InputTextMessageContent,
@@ -33,7 +34,8 @@ from aiogram.types import (
 import database
 from downloader import (
     download_track, 
-    search_tracks, 
+    search_tracks,
+    search_yandex_catalog, 
     search_artist_discography,
     search_tracks_by_lyrics,
     get_am_album_tracks,
@@ -1257,58 +1259,120 @@ async def process_and_send_audio(chat_id: int, user_id: int, track_id: str, url:
             except Exception:
                 pass
 
+_INLINE_QUERY_CACHE = {}
+_INLINE_CACHE_TTL = 900  # 15 минут
+_INLINE_CACHE_MAX = 500
+
 @dp.inline_query()
 async def inline_search_handler(inline_query: InlineQuery):
     query = inline_query.query.strip()
     
+    # 1. Быстрый ответ на пустые и слишком короткие запросы (0 нагрузки на сервер)
     if not query or len(query) < 2:
-        await inline_query.answer([], cache_time=2, is_personal=True)
+        await inline_query.answer([], cache_time=5, is_personal=False)
         return
 
     try:
-        cached_tracks = database.search_cached_tracks(query, limit=12)
+        q_norm = query.lower()
+        now = time.time()
+        tracks = None
+
+        # 2. Проверяем локальный кэш запросов в оперативной памяти
+        if q_norm in _INLINE_QUERY_CACHE:
+            cached_time, cached_items = _INLINE_QUERY_CACHE[q_norm]
+            if now - cached_time < _INLINE_CACHE_TTL:
+                tracks = cached_items
+
+        # 3. Если в памяти нет — производим прямой быстрый поиск через Яндекс Музыку
+        if tracks is None:
+            try:
+                tracks = await search_yandex_catalog(query, limit=10)
+                if not tracks:
+                    # Мягкий фоллбэк на общий каталог при отсутствии прямых совпадений
+                    tracks = await search_tracks(query, mode="official", limit=10)
+            except Exception as search_err:
+                print(f"⚠️ [INLINE YM SEARCH WARNING]: {search_err}")
+                tracks = []
+
+            # Сохраняем в кэш с контролем размера
+            if len(_INLINE_QUERY_CACHE) >= _INLINE_CACHE_MAX:
+                oldest_k = next(iter(_INLINE_QUERY_CACHE))
+                _INLINE_QUERY_CACHE.pop(oldest_k, None)
+            _INLINE_QUERY_CACHE[q_norm] = (now, tracks)
+
         valid_results = []
-        
         inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="🎧 Найти песню", switch_inline_query_current_chat="")
         ]])
 
-        for idx, track in enumerate(cached_tracks):
-            track_id, title, artist, file_id = track
-            valid_results.append(
-                InlineQueryResultCachedAudio(
-                    id=f"c_{idx}_{track_id}"[:50],
-                    audio_file_id=file_id,
-                    reply_markup=inline_kb
+        base_url = (WEBAPP_URL or "https://nomusicbot-production.up.railway.app").rstrip('/')
+
+        for idx, t in enumerate(tracks[:10]):
+            raw_id = str(t.get('raw_id') or t.get('id', '')).replace('am_ym_', '').replace('ym_', '').replace('am_', '')
+            track_full_id = f"ym_{raw_id}" if not str(t.get('id', '')).startswith('ym_') else str(t['id'])
+
+            title = t.get('title') or "Без названия"
+            artist = t.get('uploader') or t.get('artist') or "Исполнитель"
+            duration = int(float(t.get('duration') or 0))
+
+            # Проверяем наличие в базе Telegram (мгновенная отдача без загрузки с сервера)
+            cached_fid = database.get_cached_file_id(track_full_id) or database.get_cached_file_id(raw_id)
+
+            if cached_fid:
+                valid_results.append(
+                    InlineQueryResultCachedAudio(
+                        id=f"c_{idx}_{raw_id}"[:50],
+                        audio_file_id=cached_fid,
+                        caption=f"🎵 <b>{artist} — {title}</b>\n@nomscbot",
+                        parse_mode="HTML",
+                        reply_markup=inline_kb
+                    )
                 )
-            )
+            else:
+                # Трек еще не кэширован в Telegram — отдаем потоковую ссылку через эндпоинт сервера
+                stream_url = f"{base_url}/api/stream/{track_full_id}.mp3"
+                valid_results.append(
+                    InlineQueryResultAudio(
+                        id=f"a_{idx}_{raw_id}"[:50],
+                        audio_url=stream_url,
+                        title=title,
+                        performer=artist,
+                        audio_duration=duration,
+                        caption=f"🎵 <b>{artist} — {title}</b>\n@nomscbot",
+                        parse_mode="HTML",
+                        reply_markup=inline_kb
+                    )
+                )
 
         if not valid_results:
             bot_info = await bot.get_me()
             bot_username = bot_info.username or "nomscbot"
-            
             valid_results.append(
                 InlineQueryResultArticle(
-                    id="not_found_cache",
-                    title="Трек не найден в базе 😔",
-                    description="Отправь название трека напрямую в бот, чтобы он появился здесь",
+                    id="not_found",
+                    title=f"По запросу «{query[:30]}» ничего не найдено",
+                    description="Попробуй уточнить название трека или имя исполнителя",
                     input_message_content=InputTextMessageContent(
                         message_text=(
-                            f"Чтобы этот трек появился в инлайн-поиске, его нужно один раз скачать напрямую в боте @{bot_username}.\n\n"
-                            "После этого он станет доступен для отправки в любой чат моментально!"
-                        )
+                            f"🔍 По запросу «<b>{query}</b>» треков не найдено.\n\n"
+                            f"Попробуй написать в чате: <code>@{bot_username} Исполнитель Трек</code>"
+                        ),
+                        parse_mode="HTML"
                     ),
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                        InlineKeyboardButton(text="Перейти в бота", url=f"https://t.me/{bot_username}")
+                        InlineKeyboardButton(text="🔎 Искать снова", switch_inline_query_current_chat="")
                     ]])
                 )
             )
 
-        await inline_query.answer(valid_results, cache_time=5, is_personal=True)
+        # cache_time=300 (5 минут) — Telegram кэширует выдачу на своих edge-серверах
+        # is_personal=False — результат общий для всех пользователей, нагрузка на Railway = 0
+        await inline_query.answer(valid_results, cache_time=300, is_personal=False)
 
     except Exception as e:
-        print(f"❌ [INLINE LOCAL DB ERROR]: {e}")
-        await inline_query.answer([], cache_time=2, is_personal=True)
+        print(f"❌ [INLINE LIVE SEARCH ERROR]: {e}")
+        await inline_query.answer([], cache_time=5, is_personal=False)
+
 
 async def handle_webapp(request):
     html_path = os.path.join(os.path.dirname(__file__), 'index.html')
@@ -1353,21 +1417,39 @@ async def handle_api_search(request):
         print(f"API search error: {e}")
         return web.json_response({'results': [], 'error': str(e)}, headers=headers)
 
+_STREAM_DOWNLOAD_LOCKS = {}
+_STREAM_LOCKS_MUTEX = asyncio.Lock()
+
+async def get_stream_download_lock(key: str) -> asyncio.Lock:
+    async with _STREAM_LOCKS_MUTEX:
+        if key not in _STREAM_DOWNLOAD_LOCKS:
+            _STREAM_DOWNLOAD_LOCKS[key] = asyncio.Lock()
+        return _STREAM_DOWNLOAD_LOCKS[key]
+
 async def handle_api_stream(request):
     headers = {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS, HEAD',
         'Access-Control-Allow-Headers': '*'
     }
     if request.method == 'OPTIONS':
         return web.Response(headers=headers)
 
     url = request.query.get('url', '').strip()
-    track_id = request.query.get('id', '').strip()
+    track_id = request.match_info.get('track_id', '').strip() or request.query.get('id', '').strip()
     q = request.query.get('q', '').strip()
 
+    if track_id.endswith('.mp3'):
+        track_id = track_id[:-4]
+
     if not url and track_id:
-        url = track_id if track_id.startswith('ym://') else f"ym://{track_id.replace('ym_', '')}"
+        clean_id = track_id.replace('am_ym_', '').replace('ym_', '').replace('am_', '')
+        if clean_id.isdigit():
+            url = f"ym://{clean_id}"
+        elif track_id.startswith('ym://') or track_id.startswith('am://'):
+            url = track_id
+        else:
+            url = f"ym://{track_id}"
 
     if not url and not q:
         return web.json_response({'error': "Missing 'url', 'id' or 'q' parameter"}, status=400, headers=headers)
@@ -1381,7 +1463,10 @@ async def handle_api_stream(request):
                 return web.json_response({'error': 'Track not found'}, status=404, headers=headers)
             url = results[0]['url']
 
-        track_info = await download_track(url)
+        lock = await get_stream_download_lock(url)
+        async with lock:
+            track_info = await download_track(url)
+
         file_path = track_info.get('file_path')
         if not file_path or not os.path.exists(file_path):
             return web.json_response({'error': 'Audio file not generated'}, status=500, headers=headers)
@@ -1394,6 +1479,7 @@ async def handle_api_stream(request):
     except Exception as e:
         print(f"❌ [API STREAM ERROR]: {e}")
         return web.json_response({'error': str(e)}, status=500, headers=headers)
+
 
 async def handle_api_lyrics(request):
     headers = {
@@ -1423,6 +1509,7 @@ def create_web_app():
     app.router.add_get('/app', handle_webapp)
     app.router.add_route('*', '/api/search', handle_api_search)
     app.router.add_route('*', '/api/stream', handle_api_stream)
+    app.router.add_route('*', '/api/stream/{track_id}', handle_api_stream)
     app.router.add_route('*', '/api/lyrics', handle_api_lyrics)
     app.router.add_get('/health', handle_health_check)
     return app
