@@ -1,3 +1,4 @@
+import time
 import os
 import json
 import asyncio
@@ -1265,12 +1266,15 @@ _INLINE_CACHE_MAX = 500
 
 @dp.inline_query()
 async def inline_search_handler(inline_query: InlineQuery):
+    t0 = time.time()
     query = inline_query.query.strip()
-    
+
     # 1. Быстрый ответ на пустые и слишком короткие запросы (0 нагрузки на сервер)
     if not query or len(query) < 2:
-        await inline_query.answer([], cache_time=5, is_personal=False)
+        await inline_query.answer([], cache_time=5, is_personal=True)
         return
+
+    print(f"🔍 [INLINE QUERY] user={inline_query.from_user.id} query='{query}'")
 
     try:
         q_norm = query.lower()
@@ -1306,30 +1310,33 @@ async def inline_search_handler(inline_query: InlineQuery):
         ]])
 
         base_url = (WEBAPP_URL or "https://nomusicbot-production.up.railway.app").rstrip('/')
+        nl = chr(10)
 
         for idx, t in enumerate(tracks[:10]):
             raw_id = str(t.get('raw_id') or t.get('id', '')).replace('am_ym_', '').replace('ym_', '').replace('am_', '')
             track_full_id = f"ym_{raw_id}" if not str(t.get('id', '')).startswith('ym_') else str(t['id'])
 
-            title = t.get('title') or "Без названия"
-            artist = t.get('uploader') or t.get('artist') or "Исполнитель"
+            title = (t.get('title') or "Без названия").strip() or "Без названия"
+            artist = (t.get('uploader') or t.get('artist') or "Исполнитель").strip() or "Исполнитель"
             duration = int(float(t.get('duration') or 0))
+
+            caption_text = f"🎵 <b>{artist} — {title}</b>" + nl + "@nomscbot"
 
             # Проверяем наличие в базе Telegram (мгновенная отдача без загрузки с сервера)
             cached_fid = database.get_cached_file_id(track_full_id) or database.get_cached_file_id(raw_id)
 
-            if cached_fid:
+            if cached_fid and len(cached_fid) > 10:
                 valid_results.append(
                     InlineQueryResultCachedAudio(
                         id=f"c_{idx}_{raw_id}"[:50],
                         audio_file_id=cached_fid,
-                        caption=f"🎵 <b>{artist} — {title}</b>\n@nomscbot",
+                        caption=caption_text,
                         parse_mode="HTML",
                         reply_markup=inline_kb
                     )
                 )
             else:
-                # Трек еще не кэширован в Telegram — отдаем потоковую ссылку через эндпоинт сервера
+                # Потоковое аудио через эндпоинт сервера
                 stream_url = f"{base_url}/api/stream/{track_full_id}.mp3"
                 valid_results.append(
                     InlineQueryResultAudio(
@@ -1337,8 +1344,8 @@ async def inline_search_handler(inline_query: InlineQuery):
                         audio_url=stream_url,
                         title=title,
                         performer=artist,
-                        audio_duration=duration,
-                        caption=f"🎵 <b>{artist} — {title}</b>\n@nomscbot",
+                        audio_duration=duration if duration > 0 else None,
+                        caption=caption_text,
                         parse_mode="HTML",
                         reply_markup=inline_kb
                     )
@@ -1347,16 +1354,14 @@ async def inline_search_handler(inline_query: InlineQuery):
         if not valid_results:
             bot_info = await bot.get_me()
             bot_username = bot_info.username or "nomscbot"
+            not_found_msg = f"🔍 По запросу «<b>{query}</b>» ничего не найдено." + nl + nl + f"Попробуй написать в чате: <code>@{bot_username} Исполнитель Трек</code>"
             valid_results.append(
                 InlineQueryResultArticle(
                     id="not_found",
                     title=f"По запросу «{query[:30]}» ничего не найдено",
                     description="Попробуй уточнить название трека или имя исполнителя",
                     input_message_content=InputTextMessageContent(
-                        message_text=(
-                            f"🔍 По запросу «<b>{query}</b>» треков не найдено.\n\n"
-                            f"Попробуй написать в чате: <code>@{bot_username} Исполнитель Трек</code>"
-                        ),
+                        message_text=not_found_msg,
                         parse_mode="HTML"
                     ),
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
@@ -1365,13 +1370,16 @@ async def inline_search_handler(inline_query: InlineQuery):
                 )
             )
 
-        # cache_time=300 (5 минут) — Telegram кэширует выдачу на своих edge-серверах
-        # is_personal=False — результат общий для всех пользователей, нагрузка на Railway = 0
-        await inline_query.answer(valid_results, cache_time=300, is_personal=False)
+        elapsed = time.time() - t0
+        print(f"✅ [INLINE ANSWER] returned {len(valid_results)} results for '{query}' in {elapsed:.2f}s")
+        await inline_query.answer(valid_results, cache_time=10, is_personal=True)
 
     except Exception as e:
         print(f"❌ [INLINE LIVE SEARCH ERROR]: {e}")
-        await inline_query.answer([], cache_time=5, is_personal=False)
+        try:
+            await inline_query.answer([], cache_time=5, is_personal=True)
+        except Exception:
+            pass
 
 
 async def handle_webapp(request):

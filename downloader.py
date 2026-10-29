@@ -1476,60 +1476,37 @@ async def download_sc_track(url: str, output_dir: str = DEFAULT_TMP_DIR) -> dict
     }
 
 async def search_yandex_catalog(query: str, limit: int = 15):
-    """Прямой поиск в официальном каталоге Яндекс Музыки с высоким качеством и обложками"""
+    """Прямой и быстрый поиск в официальном каталоге Яндекс Музыки (0.3 сек)"""
     client = await get_ym_client()
     if not client:
         return []
     try:
-        sr = await client.search(text=query, type_='all', page=0)
+        sr = await asyncio.wait_for(client.search(text=query, type_='track', page=0), timeout=2.0)
         items = []
         seen_ids = set()
 
-        def add_track(t):
-            if not t or not getattr(t, 'id', None) or t.id in seen_ids:
-                return
-            seen_ids.add(t.id)
-            arts = ", ".join([a.name for a in t.artists]) if t.artists else "Исполнитель"
-            cover_url = f"https://{t.cover_uri.replace('%%', '600x600')}" if t.cover_uri else "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80"
-            items.append({
-                'id': f"ym_{t.id}",
-                'raw_id': str(t.id),
-                'title': t.title or "Без названия",
-                'uploader': arts,
-                'cover_url': cover_url,
-                'duration': (t.duration_ms or 0) // 1000,
-                'url': f"ym://{t.id}",
-                'source': 'yandex',
-                'is_censored': False
-            })
-
-        # 1. Если Яндекс определил лучший результат (трек или артист)
-        if sr and getattr(sr, 'best', None):
-            best = sr.best
-            if getattr(best, 'type', None) == 'track' and getattr(best, 'result', None):
-                add_track(best.result)
-            elif getattr(best, 'type', None) == 'artist' and getattr(best, 'result', None):
-                try:
-                    art_top = await client.artists_tracks(best.result.id, page=0, page_size=6)
-                    if art_top and getattr(art_top, 'tracks', None):
-                        for t in art_top.tracks:
-                            add_track(t)
-                except Exception:
-                    pass
-
-        # 2. Добавляем треки из основной поисковой выдачи
         if sr and getattr(sr, 'tracks', None) and getattr(sr.tracks, 'results', None):
             for t in sr.tracks.results:
-                add_track(t)
+                if not t or not getattr(t, 'id', None) or t.id in seen_ids:
+                    continue
+                seen_ids.add(t.id)
+                arts = ", ".join([a.name for a in t.artists]) if t.artists else "Исполнитель"
+                cover_url = f"https://{t.cover_uri.replace('%%', '600x600')}" if t.cover_uri else "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80"
+                items.append({
+                    'id': f"ym_{t.id}",
+                    'raw_id': str(t.id),
+                    'title': t.title or "Без названия",
+                    'uploader': arts,
+                    'cover_url': cover_url,
+                    'duration': (t.duration_ms or 0) // 1000,
+                    'url': f"ym://{t.id}",
+                    'source': 'yandex',
+                    'is_censored': False
+                })
+                if len(items) >= limit:
+                    break
 
-        # 3. Если через type_='all' ничего не нашлось, пробуем строго type_='track'
-        if not items:
-            sr_track = await client.search(text=query, type_='track', page=0)
-            if sr_track and getattr(sr_track, 'tracks', None) and getattr(sr_track.tracks, 'results', None):
-                for t in sr_track.tracks.results:
-                    add_track(t)
-
-        return items[:limit]
+        return items
     except Exception as e:
         print(f"YM search error: {e}")
         return []
