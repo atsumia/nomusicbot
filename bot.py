@@ -5,6 +5,7 @@ import asyncio
 import re
 import uuid
 import tempfile
+import signal
 import aiohttp
 from dotenv import load_dotenv
 
@@ -13,6 +14,7 @@ load_dotenv()
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.types import (
     FSInputFile,
     InlineKeyboardMarkup,
@@ -1309,7 +1311,7 @@ async def inline_search_handler(inline_query: InlineQuery):
             InlineKeyboardButton(text="🎧 Найти песню", switch_inline_query_current_chat="")
         ]])
 
-        base_url = (WEBAPP_URL or "https://nomusicbot-production.up.railway.app").rstrip('/')
+        base_url = (WEBAPP_URL or "").rstrip('/')
         nl = chr(10)
 
         for idx, t in enumerate(tracks[:10]):
@@ -1562,9 +1564,14 @@ async def set_bot_commands():
 async def main():
     database.init_db()
     if bot and dp:
+        if not WEBAPP_URL or not WEBAPP_URL.startswith("https://"):
+            raise RuntimeError("WEBAPP_URL must be the public HTTPS URL of this bot")
+        if os.getenv("BOT_TRANSPORT", "polling") == "webhook":
+            await run_webhook_server()
+            return
         await set_bot_commands()
         await start_dummy_web_server()
-        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.delete_webhook(drop_pending_updates=False)
         print("✅ Бот NoMusic и Web API успешно запущены...")
         await dp.start_polling(
             bot,
@@ -1581,6 +1588,41 @@ async def main():
         print(f"🚀 Музыкальный движок NoMusic успешно запущен на http://127.0.0.1:{port}")
         while True:
             await asyncio.sleep(3600)
+
+
+async def run_webhook_server():
+    secret = os.getenv("WEBHOOK_SECRET")
+    if not secret:
+        raise RuntimeError("WEBHOOK_SECRET is required for webhook mode")
+    app = create_web_app()
+    SimpleRequestHandler(
+        dispatcher=dp, bot=bot, secret_token=secret,
+        handle_in_background=True,
+    ).register(app, path="/telegram/webhook")
+    setup_application(app, dp, bot=bot)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", "8080"))).start()
+    stopped = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stopped.set)
+        except NotImplementedError:
+            pass
+    try:
+        await set_bot_commands()
+        await bot.set_webhook(
+            url=f"{WEBAPP_URL.rstrip('/')}/telegram/webhook",
+            secret_token=secret,
+            allowed_updates=["message", "callback_query", "inline_query", "chosen_inline_result"],
+            drop_pending_updates=False,
+        )
+        print("✅ NoMusic bot and Web API started in webhook mode")
+        await stopped.wait()
+    finally:
+        # Keep the webhook registered so incoming requests can wake an idle machine.
+        await runner.cleanup()
 
 
 if __name__ == "__main__":

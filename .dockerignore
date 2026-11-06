@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+*.db
+*.db-*
+*.sqlite3
+__pycache__
+*.py[cod]
+.venv
+venv
+env
+*.png
+*.jpg
+*.jpeg
+deployment.env

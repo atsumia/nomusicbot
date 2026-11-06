@@ -2,7 +2,7 @@ import sqlite3
 import os
 import re
 
-# Поддержка постоянного диска на Railway (например, /app/data/database.db)
+# Путь к SQLite на постоянном диске, заданный через DB_PATH.
 DB_NAME = os.getenv("DB_PATH", "database.db")
 
 def get_connection():
